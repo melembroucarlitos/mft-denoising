@@ -3,6 +3,7 @@ import random
 import math
 from typing import Tuple
 from dataclasses import dataclass
+from torch.utils.data import Dataset, DataLoader
 
 set_seed = lambda seed: random.seed(seed)
 
@@ -38,9 +39,127 @@ class TwoHotStream:
         x = x_star + noise
         return x, x_star
 
+
+class TwoHotDataset(Dataset):
+    """
+    PyTorch Dataset wrapper for TwoHotStream.
+    Generates samples on-the-fly for each index access.
+    """
+    def __init__(self, stream: TwoHotStream, size: int):
+        """
+        Args:
+            stream: TwoHotStream instance to generate samples from
+            size: Number of samples in the dataset (epoch length)
+        """
+        self.stream = stream
+        self.size = size
+        
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, idx):
+        """
+        Generate a single sample.
+        Note: idx is ignored since we generate fresh samples each time.
+        """
+        # Generate a single sample (batch size = 1)
+        x, x_star = self.stream.sample_batch(1)
+        # Remove batch dimension
+        return x.squeeze(0), x_star.squeeze(0)
+
+
+def create_dataloaders(cfg: DataConfig, batch_size: int = 128, num_workers: int = 0):
+    """
+    Create train and validation dataloaders.
+    
+    Args:
+        cfg: DataConfig with dataset parameters
+        batch_size: Batch size for dataloaders
+        num_workers: Number of worker processes for data loading
+        
+    Returns:
+        train_loader, val_loader
+    """
+    # Create separate streams for train and val (different seeds)
+    train_cfg = DataConfig(
+        d=cfg.d,
+        sparsity=cfg.sparsity,
+        noise_variance=cfg.noise_variance,
+        n_train=cfg.n_train,
+        n_val=cfg.n_val,
+        seed=cfg.seed,
+        device=cfg.device
+    )
+    
+    val_cfg = DataConfig(
+        d=cfg.d,
+        sparsity=cfg.sparsity,
+        noise_variance=cfg.noise_variance,
+        n_train=cfg.n_train,
+        n_val=cfg.n_val,
+        seed=cfg.seed + 1,  # Different seed for validation
+        device=cfg.device
+    )
+    
+    train_stream = TwoHotStream(train_cfg)
+    val_stream = TwoHotStream(val_cfg)
+    
+    # Create datasets
+    train_dataset = TwoHotDataset(train_stream, cfg.n_train)
+    val_dataset = TwoHotDataset(val_stream, cfg.n_val)
+    
+    # Create dataloaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,  # Shuffle indices (though samples are random anyway)
+        num_workers=num_workers,
+        pin_memory=True if cfg.device == "cuda" else False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True if cfg.device == "cuda" else False
+    )
+    
+    return train_loader, val_loader
+
+
 if __name__ == "__main__":
-    cfg = DataConfig()
-    stream = TwoHotStream(cfg)
-    x, x_star = stream.sample_batch(10)
-    print(x)
-    print(x_star)
+    # Configuration
+    cfg = DataConfig(
+        d=1000,
+        sparsity=2,
+        noise_variance=0.03,
+        n_train=1000,  # Smaller for demo
+        n_val=200,
+        seed=42
+    )
+    
+    # Create dataloaders
+    train_loader, val_loader = create_dataloaders(cfg, batch_size=32)
+    
+    print(f"Train dataset size: {len(train_loader.dataset)}")
+    print(f"Val dataset size: {len(val_loader.dataset)}")
+    print(f"Number of train batches: {len(train_loader)}")
+    print(f"Number of val batches: {len(val_loader)}")
+    
+    # Test iteration
+    print("\nTesting train loader:")
+    for batch_idx, (x, x_star) in enumerate(train_loader):
+        print(f"Batch {batch_idx}: x.shape={x.shape}, x_star.shape={x_star.shape}")
+        print(f"  x range: [{x.min():.3f}, {x.max():.3f}]")
+        print(f"  x_star unique values: {x_star.unique()}")
+        print(f"  Active positions per sample: {x_star.sum(dim=1)}")
+        if batch_idx >= 2:  # Show only first 3 batches
+            break
+    
+    print("\n" + "="*50)
+    print("Example: First sample from first batch")
+    x, x_star = next(iter(train_loader))
+    print(f"Noisy input (x[0]): {x[0][:20]}...")  # First 20 dims
+    print(f"Clean signal (x_star[0]): {x_star[0][:20]}...")
+    print(f"Active indices: {torch.where(x_star[0] == 1)[0]}")
