@@ -151,15 +151,13 @@ if __name__ == "__main__":
     print("\nTesting train loader:")
     for batch_idx, (x, x_star) in enumerate(train_loader):
         print(f"Batch {batch_idx}: x.shape={x.shape}, x_star.shape={x_star.shape}")
-        print(f"  x range: [{x.min():.3f}, {x.max():.3f}]")
-        print(f"  x_star unique values: {x_star.unique()}")
-        print(f"  Active positions per sample: {x_star.sum(dim=1)}")
-        if batch_idx >= 2:  # Show only first 3 batches
+        print(f"x: {x}")
+        print(f"x_star: {x_star}")
+        print(f"noise: {(x - x_star).sum()}")
+        if batch_idx >= 10:  # Show only first 3 batches
             break
     
-    print("\n" + "="*50)
-    print("Example: First sample from first batch")
-    x, x_star = next(iter(train_loader))
-    print(f"Noisy input (x[0]): {x[0][:20]}...")  # First 20 dims
-    print(f"Clean signal (x_star[0]): {x_star[0][:20]}...")
-    print(f"Active indices: {torch.where(x_star[0] == 1)[0]}")
+
+    # Tests
+    # x_star is two_hot vector
+    # there are no repeats
