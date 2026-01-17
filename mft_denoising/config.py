@@ -30,6 +30,10 @@ class TrainingConfig:
     batch_size: int = 128
     encoder_regularization: float = 0.0
     decoder_regularization: float = 0.0
+    two_stage_training: bool = False  # Enable two-stage training with frozen GMM encoder
+    stage2_epochs: Optional[int] = None  # Epochs for stage 2 (defaults to epochs if None)
+    num_clusters: int = 3  # Number of Gaussian components for clustering
+    num_traces: int = 1  # Number of traces (frozen encoder samples) to train in stage 2
 
 
 @dataclass
