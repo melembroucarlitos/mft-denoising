@@ -8,3 +8,7 @@ experiments/
 .cursor/
 .vscode/
 nice_graphs/
+
+# Virtual environments
+.venv/
+venv/
