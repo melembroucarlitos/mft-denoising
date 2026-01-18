@@ -26,6 +26,9 @@ except ImportError:
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Import histogram clustering for memory-efficient analysis
+from experiments_claude.analysis.histogram_clustering import analyze_weight_pairs_histogram
+
 
 def load_model_weights(experiment_name: str) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -167,7 +170,7 @@ def fit_gaussian_mixture(weight_pairs: np.ndarray, max_components: int = 5) -> D
         aic_scores.append(gmm.aic(weight_pairs))
 
     # Best model: lowest BIC
-    best_n_components = np.argmin(bic_scores) + 1
+    best_n_components = int(np.argmin(bic_scores) + 1)
 
     # Refit best model
     best_gmm = GaussianMixture(n_components=best_n_components, random_state=42)
@@ -212,13 +215,21 @@ def compute_statistical_metrics(weight_pairs: np.ndarray) -> Dict[str, float]:
     }
 
 
-def analyze_experiment(experiment_name: str, save_metrics: bool = True) -> Dict[str, Any]:
+def analyze_experiment(
+    experiment_name: str,
+    save_metrics: bool = True,
+    use_histogram: bool = True,
+    compute_gaussian_health: bool = False
+) -> Dict[str, Any]:
     """
     Complete analysis of an experiment's weight decoupling.
 
     Args:
         experiment_name: Name of experiment to analyze
         save_metrics: If True, save metrics JSON to experiment directory
+        use_histogram: If True, use histogram-based clustering (default, memory-efficient).
+                       If False, use direct DBSCAN on all points (may OOM for large models).
+        compute_gaussian_health: If True, compute per-cluster Gaussian-ness diagnostics.
 
     Returns:
         Dictionary with all computed metrics
@@ -227,6 +238,11 @@ def analyze_experiment(experiment_name: str, save_metrics: bool = True) -> Dict[
         >>> metrics = analyze_experiment('reference_3blob_20260117_123456')
         >>> print(f"Silhouette score: {metrics['clustering']['silhouette_score']}")
         >>> print(f"Number of blobs: {metrics['clustering']['n_clusters']}")
+
+        >>> # With Gaussian health checks
+        >>> metrics = analyze_experiment('reference_3blob', compute_gaussian_health=True)
+        >>> for cid, health in metrics['gaussian_health'].items():
+        ...     print(f"Cluster {cid} Radial KS: {health['radial_KS']:.3f}")
     """
     print(f"Analyzing experiment: {experiment_name}")
 
@@ -239,13 +255,70 @@ def analyze_experiment(experiment_name: str, save_metrics: bool = True) -> Dict[
     print(f"  Decoder range: [{weight_pairs[:, 1].min():.4f}, {weight_pairs[:, 1].max():.4f}]")
 
     # Compute metrics
+    if use_histogram:
+        print(f"  Using histogram-based clustering (memory-efficient)")
+        histogram_results = analyze_weight_pairs_histogram(encoder_weights, decoder_weights)
+
+        # Convert histogram results to match clustering metrics format
+        clustering_metrics = {
+            "n_clusters": histogram_results["n_clusters"],
+            "silhouette_score": histogram_results["silhouette_score"],
+            "n_noise_points": histogram_results["n_noise_bins"],
+            "cluster_centers": histogram_results["cluster_centers"],
+            "cluster_sizes": histogram_results["cluster_sizes"],
+            "quality_gate_passed": histogram_results["quality_gate_passed"],
+            "method": "histogram",
+            "histogram_debug": histogram_results["debug_info"]
+        }
+    else:
+        print(f"  Using direct DBSCAN (may be slow/OOM for large models)")
+        clustering_metrics = compute_clustering_metrics(weight_pairs)
+        clustering_metrics["method"] = "direct_dbscan"
+
     metrics = {
         "experiment_name": experiment_name,
         "weight_pair_shape": weight_pairs.shape,
         "statistical": compute_statistical_metrics(weight_pairs),
-        "clustering": compute_clustering_metrics(weight_pairs),
+        "clustering": clustering_metrics,
         "gaussian_mixture": fit_gaussian_mixture(weight_pairs)
     }
+
+    # NEW: Gaussian health checks
+    if compute_gaussian_health and clustering_metrics["n_clusters"] > 0:
+        from experiments_claude.analysis.gaussian_diagnostics import (
+            gaussian_health_checks,
+            assess_gaussian_quality
+        )
+        from experiments_claude.analysis.histogram_clustering import (
+            analyze_weight_pairs_histogram_with_labels
+        )
+
+        print(f"\n  Computing Gaussian health checks...")
+
+        # Get labels for all points
+        if use_histogram:
+            # Use histogram clustering with label assignment
+            _, labels = analyze_weight_pairs_histogram_with_labels(
+                encoder_weights,
+                decoder_weights
+            )
+        else:
+            # Labels already computed by direct DBSCAN
+            labels = clustering_metrics.get("cluster_labels")
+            if labels is None:
+                print(f"    Warning: Labels not available, skipping Gaussian health")
+                labels = None
+
+        if labels is not None:
+            gaussian_health = gaussian_health_checks(
+                points=weight_pairs,
+                labels=labels,
+                n_clusters=clustering_metrics["n_clusters"],
+                sample_size=50000,
+                n_projections=20,
+                eps=1e-6
+            )
+            metrics["gaussian_health"] = gaussian_health
 
     # Summary
     print(f"\n  Statistical metrics:")
@@ -254,13 +327,47 @@ def analyze_experiment(experiment_name: str, save_metrics: bool = True) -> Dict[
     print(f"    Decoder mean: {metrics['statistical']['decoder_mean']:.4f}")
 
     if SKLEARN_AVAILABLE:
-        print(f"\n  Clustering metrics:")
+        print(f"\n  Clustering metrics (method: {metrics['clustering'].get('method', 'unknown')}):")
         print(f"    Number of clusters: {metrics['clustering']['n_clusters']}")
         if metrics['clustering']['silhouette_score'] is not None:
             print(f"    Silhouette score: {metrics['clustering']['silhouette_score']:.4f}")
 
+        # Print cluster details if available
+        if 'cluster_sizes' in metrics['clustering'] and metrics['clustering']['cluster_sizes']:
+            print(f"    Cluster sizes:")
+            for i, size in enumerate(metrics['clustering']['cluster_sizes']):
+                center = metrics['clustering']['cluster_centers'][i]
+                pct = size / weight_pairs.shape[0] * 100
+                print(f"      Cluster {i}: {size:,} points ({pct:.2f}%) at encoder={center[0]:.4f}, decoder={center[1]:.4f}")
+
+        if 'quality_gate_passed' in metrics['clustering']:
+            status = "✓ PASS" if metrics['clustering']['quality_gate_passed'] else "✗ FAIL"
+            print(f"    Quality gate: {status}")
+
         print(f"\n  Gaussian Mixture:")
         print(f"    Best number of components: {metrics['gaussian_mixture']['best_n_components']}")
+
+        # Print Gaussian health if computed
+        if 'gaussian_health' in metrics:
+            from experiments_claude.analysis.gaussian_diagnostics import assess_gaussian_quality
+
+            print(f"\n  Gaussian Health Checks:")
+            for cluster_id in sorted(metrics['gaussian_health'].keys()):
+                health = metrics['gaussian_health'][cluster_id]
+
+                if "note" in health:
+                    print(f"    Cluster {cluster_id} ({health['n']} points): {health['note']}")
+                    continue
+
+                assessment = assess_gaussian_quality(health)
+                print(f"    Cluster {cluster_id} ({health['n']:,} points):")
+                print(f"      Radial KS: {health['radial_KS']:.3f}")
+                tail_str = ', '.join([f"{t}: {r:.2f}" for t, r in health['tail_ratios'].items()])
+                print(f"      Tail ratios: {{{tail_str}}}")
+                print(f"      Angle uniformity (R): {health['angle_R']:.4f}")
+                print(f"      Projection AD (median): {health['proj_AD_median']:.2f}")
+                print(f"      Mardia kurtosis dev: {health['mardia_kurtosis_dev']:.2f}")
+                print(f"      → Assessment: {assessment}")
 
     # Save metrics
     if save_metrics:

@@ -17,8 +17,7 @@
     "num_clusters": 3,
     "num_traces": 1,
     "enable_diagnostics": true,
-    "diagnostic_sample_size": 5000,
-    "save_epoch_checkpoints": true
+    "diagnostic_sample_size": 5000
   },
   "loss": {
     "loss_type": "scaled_mse",
@@ -33,7 +32,7 @@
     "seed": 42,
     "device": "cuda"
   },
-  "experiment_name": "reference_3blob",
+  "experiment_name": "reference_3blob_full",
   "output_dir": null,
   "save_model": true,
   "save_plots": true

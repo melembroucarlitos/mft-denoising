@@ -1,0 +1,128 @@
+Loaded config from: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_reference.json
+Training with ADAM on device: cuda
+Learning rate: 0.02, Temperature: 0.0, Encoder regularization: 0.0, Decoder regularization: 0.03
+Experiment configuration saved to: experiments/sweep_test_reference_20260118_041511/config.json
+Output directory: experiments/sweep_test_reference_20260118_041511
+Epoch: 1, Batch: 0, Loss: 32.018383, On-Loss: 32.000000, Off-Loss: 0.000000
+Epoch 1/3: Train Loss: 32.018383, Train Scaled Loss: 32.000000, Train On-Loss: 32.000000, Train Off-Loss: 0.000000, Test Scaled Loss: 31.142822
+  Diagnostics: clusters=1, correlation=-0.514
+Figure saved to: experiments/sweep_test_reference_20260118_041511/encoder_decoder_pairs_epoch_0001.png
+Epoch: 2, Batch: 0, Loss: 36.897194, On-Loss: 30.734098, Off-Loss: 0.408732
+Epoch 2/3: Train Loss: 36.897194, Train Scaled Loss: 31.142830, Train On-Loss: 30.734098, Train Off-Loss: 0.408732, Test Scaled Loss: 31.079153
+  Diagnostics: clusters=1, correlation=0.708
+Figure saved to: experiments/sweep_test_reference_20260118_041511/encoder_decoder_pairs_epoch_0002.png
+Epoch: 3, Batch: 0, Loss: 31.451656, On-Loss: 29.664356, Off-Loss: 1.412219
+Epoch 3/3: Train Loss: 31.451656, Train Scaled Loss: 31.076576, Train On-Loss: 29.664356, Train Off-Loss: 1.412219, Test Scaled Loss: 31.435379
+  Diagnostics: clusters=1, correlation=-0.783
+Figure saved to: experiments/sweep_test_reference_20260118_041511/encoder_decoder_pairs_epoch_0003.png
+
+Training complete!
+Figure saved to: experiments/sweep_test_reference_20260118_041511/encoder_weights_histogram.png
+Figure saved to: experiments/sweep_test_reference_20260118_041511/network_outputs_histogram.png
+Figure saved to: experiments/sweep_test_reference_20260118_041511/encoder_decoder_pairs.png
+Results saved to: experiments/sweep_test_reference_20260118_041511/results.json
+Model saved to: experiments/sweep_test_reference_20260118_041511/model.pth
+Loaded config from: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_high_lr.json
+Training with ADAM on device: cuda
+Learning rate: 0.08, Temperature: 0.0, Encoder regularization: 0.0, Decoder regularization: 0.03
+Experiment configuration saved to: experiments/sweep_test_high_lr_20260118_041525/config.json
+Output directory: experiments/sweep_test_high_lr_20260118_041525
+Epoch: 1, Batch: 0, Loss: 32.018459, On-Loss: 32.000000, Off-Loss: 0.000000
+Epoch 1/2: Train Loss: 32.018459, Train Scaled Loss: 32.000000, Train On-Loss: 32.000000, Train Off-Loss: 0.000000, Test Scaled Loss: 33.876381
+  Diagnostics: clusters=2, silhouette=0.894, correlation=-0.475
+Figure saved to: experiments/sweep_test_high_lr_20260118_041525/encoder_decoder_pairs_epoch_0001.png
+Epoch: 2, Batch: 0, Loss: 132.177856, On-Loss: 27.414597, Off-Loss: 6.461960
+Epoch 2/2: Train Loss: 132.177856, Train Scaled Loss: 33.876556, Train On-Loss: 27.414597, Train Off-Loss: 6.461960, Test Scaled Loss: 31.030325
+  Diagnostics: clusters=1, correlation=0.467
+Figure saved to: experiments/sweep_test_high_lr_20260118_041525/encoder_decoder_pairs_epoch_0002.png
+
+Training complete!
+Figure saved to: experiments/sweep_test_high_lr_20260118_041525/encoder_weights_histogram.png
+Figure saved to: experiments/sweep_test_high_lr_20260118_041525/network_outputs_histogram.png
+Figure saved to: experiments/sweep_test_high_lr_20260118_041525/encoder_decoder_pairs.png
+Results saved to: experiments/sweep_test_high_lr_20260118_041525/results.json
+Model saved to: experiments/sweep_test_high_lr_20260118_041525/model.pth
+Loaded config from: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_large_init.json
+Training with ADAM on device: cuda
+Learning rate: 0.02, Temperature: 0.0, Encoder regularization: 0.0, Decoder regularization: 0.03
+Experiment configuration saved to: experiments/sweep_test_large_init_20260118_041535/config.json
+Output directory: experiments/sweep_test_large_init_20260118_041535
+Epoch: 1, Batch: 0, Loss: 32.204636, On-Loss: 32.000000, Off-Loss: 0.000000
+Epoch 1/2: Train Loss: 32.204636, Train Scaled Loss: 32.000000, Train On-Loss: 32.000000, Train Off-Loss: 0.000000, Test Scaled Loss: 31.165152
+  Diagnostics: clusters=1, correlation=-0.369
+Figure saved to: experiments/sweep_test_large_init_20260118_041535/encoder_decoder_pairs_epoch_0001.png
+Epoch: 2, Batch: 0, Loss: 35.845085, On-Loss: 30.757050, Off-Loss: 0.408051
+Epoch 2/2: Train Loss: 35.845085, Train Scaled Loss: 31.165100, Train On-Loss: 30.757050, Train Off-Loss: 0.408051, Test Scaled Loss: 31.074612
+  Diagnostics: clusters=1, correlation=0.037
+Figure saved to: experiments/sweep_test_large_init_20260118_041535/encoder_decoder_pairs_epoch_0002.png
+
+Training complete!
+Figure saved to: experiments/sweep_test_large_init_20260118_041535/encoder_weights_histogram.png
+Figure saved to: experiments/sweep_test_large_init_20260118_041535/network_outputs_histogram.png
+Figure saved to: experiments/sweep_test_large_init_20260118_041535/encoder_decoder_pairs.png
+Results saved to: experiments/sweep_test_large_init_20260118_041535/results.json
+Model saved to: experiments/sweep_test_large_init_20260118_041535/model.pth
+Hyperparameter Sweep - Test Run
+
+This validates the sweep infrastructure with minimal compute.
+Total runtime: ~3-5 minutes
+
+================================================================================
+TEST SWEEP - Infrastructure Validation
+================================================================================
+
+Running 3 test experiments...
+Estimated time: 3-5 minutes
+
+
+[1/3] Testing: test_reference
+  LR: 0.0200, Batch: 10000, Init: 0.03, Epochs: 3, N_train: 10000
+Launching experiment: sweep_test_reference
+Config: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_reference.json
+Command: /usr/bin/python /home/ubuntu/code/mft-denoising/main.py /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_reference.json
+--------------------------------------------------------------------------------
+  ✓ SUCCESS
+    Time: 13.6s
+    Final test loss: 31.435
+    Clusters: 1
+
+[2/3] Testing: test_high_lr
+  LR: 0.0800, Batch: 5000, Init: 0.03, Epochs: 2, N_train: 5000
+Launching experiment: sweep_test_high_lr
+Config: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_high_lr.json
+Command: /usr/bin/python /home/ubuntu/code/mft-denoising/main.py /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_high_lr.json
+--------------------------------------------------------------------------------
+  ✓ SUCCESS
+    Time: 10.1s
+    Final test loss: 31.030
+    Clusters: 1
+
+[3/3] Testing: test_large_init
+  LR: 0.0200, Batch: 5000, Init: 0.10, Epochs: 2, N_train: 5000
+Launching experiment: sweep_test_large_init
+Config: /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_large_init.json
+Command: /usr/bin/python /home/ubuntu/code/mft-denoising/main.py /home/ubuntu/code/mft-denoising/experiments_claude/configs/sweep_test_large_init.json
+--------------------------------------------------------------------------------
+  ✓ SUCCESS
+    Time: 10.3s
+    Final test loss: 31.075
+    Clusters: 1
+
+================================================================================
+TEST SUMMARY
+================================================================================
+
+Success rate: 3/3
+
+✓ ALL TESTS PASSED
+
+Infrastructure validated. Ready for full sweep.
+
+================================================================================
+READY FOR FULL SWEEP
+================================================================================
+
+To run full sweep:
+  from experiments_claude.quick_hyperparam_sweep import design_sweep, run_sweep
+  experiments = design_sweep(budget_hours=1.5)
+  results = run_sweep(experiments)

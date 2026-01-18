@@ -36,6 +36,7 @@ class TrainingConfig:
     num_traces: int = 1  # Number of traces (frozen encoder samples) to train in stage 2
     enable_diagnostics: bool = False  # Enable real-time blob formation diagnostics
     diagnostic_sample_size: int = 5000  # Number of weight pairs to sample per epoch for diagnostics
+    save_epoch_checkpoints: bool = False  # Save model checkpoint after each epoch
 
 
 @dataclass

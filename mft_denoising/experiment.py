@@ -85,6 +85,13 @@ class ExperimentTracker:
                 print(f'  Diagnostics: clusters={diagnostics["n_clusters_dbscan"]}, '
                       f'correlation={diagnostics["weight_correlation"]:.3f}')
 
+        # Save per-epoch checkpoint if enabled
+        if self.config.training.save_epoch_checkpoints and model is not None:
+            checkpoint_path = self.output_dir / f"checkpoint_epoch_{epoch}.pth"
+            import torch
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f'  Checkpoint saved: {checkpoint_path.name}')
+
         self.train_history.append(epoch_data)
     
     def save_results(self, final_metrics: Optional[Dict[str, Any]] = None, model_state: Optional[Dict] = None):
