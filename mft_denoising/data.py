@@ -22,11 +22,15 @@ class TwoHotStream:
     Generates B samples with s active coordinates (set to 1) in a d-dimensional vector,
     plus iid Gaussian noise with variance eta2.
     Returns (x, x_star, mask_on) where x_star is the clean two-hot and mask_on is its mask.
+    
+    Note: Data is always generated on CPU to support pin_memory in DataLoader.
+    Data will be moved to GPU during training.
     """
     def __init__(self, cfg: DataConfig):
         self.cfg = cfg
         set_seed(cfg.seed)
-        self.device = torch.device(cfg.device)
+        # Always generate data on CPU for pin_memory support
+        self.device = torch.device("cpu")
         random.seed(torch.initial_seed() & 0xFFFFFFFF)
 
     @torch.no_grad()
