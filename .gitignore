@@ -12,3 +12,8 @@ nice_graphs/
 # Virtual environments
 .venv/
 venv/
+
+# Diagnostic test experiments
+experiments_claude/configs/diagnostic_test.json
+experiments/diagnostic_test_*/
+

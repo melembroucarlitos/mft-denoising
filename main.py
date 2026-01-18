@@ -120,7 +120,7 @@ def train(
                 "loss_on": avg_loss_on_w,
                 "loss_off": avg_loss_off,
             }
-            tracker.log_epoch(epoch + 1, train_metrics, test_metrics)
+            tracker.log_epoch(epoch + 1, train_metrics, test_metrics, model=model)
             
             # Save 2D encoder-decoder pairs plot at each epoch
             if config.save_plots:
@@ -156,7 +156,12 @@ def train_stage2_decoder_only(
     Returns:
         Trained model (decoder only)
     """
-    device = torch.device(config.data.device)
+    # Validate device - fall back to CPU if CUDA is requested but not available
+    device_str = config.data.device
+    if device_str.startswith("cuda") and not torch.cuda.is_available():
+        print(f"Warning: CUDA requested but not available. Falling back to CPU.")
+        device_str = "cpu"
+    device = torch.device(device_str)
     model = model.to(device)
     
     # Ensure encoder is frozen

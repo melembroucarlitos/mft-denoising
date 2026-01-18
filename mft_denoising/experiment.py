@@ -50,20 +50,41 @@ class ExperimentTracker:
         print(f"Experiment configuration saved to: {config_path}")
         print(f"Output directory: {self.output_dir}")
     
-    def log_epoch(self, epoch: int, train_metrics: Dict[str, float], test_metrics: Dict[str, float]):
+    def log_epoch(self, epoch: int, train_metrics: Dict[str, float], test_metrics: Dict[str, float], model: Optional[Any] = None):
         """
         Log metrics for a single epoch.
-        
+
         Args:
             epoch: Epoch number (1-indexed)
             train_metrics: Dictionary of training metrics (e.g., {"loss": 0.5, "scaled_loss": 0.4})
             test_metrics: Dictionary of test metrics (e.g., {"scaled_loss": 0.3})
+            model: Optional model for computing diagnostics (if enable_diagnostics=True)
         """
         epoch_data = {
             "epoch": epoch,
             "train": train_metrics,
             "test": test_metrics,
         }
+
+        # Compute real-time diagnostics if enabled
+        if self.config.training.enable_diagnostics and model is not None:
+            from mft_denoising.diagnostics import compute_lightweight_blob_metrics
+
+            diagnostics = compute_lightweight_blob_metrics(
+                model,
+                n_samples=self.config.training.diagnostic_sample_size
+            )
+            epoch_data["diagnostics"] = diagnostics
+
+            # Print summary for user feedback
+            if diagnostics["silhouette_score"] is not None:
+                print(f'  Diagnostics: clusters={diagnostics["n_clusters_dbscan"]}, '
+                      f'silhouette={diagnostics["silhouette_score"]:.3f}, '
+                      f'correlation={diagnostics["weight_correlation"]:.3f}')
+            else:
+                print(f'  Diagnostics: clusters={diagnostics["n_clusters_dbscan"]}, '
+                      f'correlation={diagnostics["weight_correlation"]:.3f}')
+
         self.train_history.append(epoch_data)
     
     def save_results(self, final_metrics: Optional[Dict[str, Any]] = None, model_state: Optional[Dict] = None):
