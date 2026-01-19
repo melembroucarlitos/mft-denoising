@@ -1,0 +1,41 @@
+{
+  "model": {
+    "hidden_size": 512,
+    "encoder_initialization_scale": 0.2,
+    "decoder_initialization_scale": 0.2
+  },
+  "training": {
+    "optimizer_type": "adam",
+    "learning_rate": 0.08,
+    "temperature": 0.0,
+    "epochs": 20,
+    "batch_size": 10000,
+    "encoder_regularization": 0.0,
+    "decoder_regularization": 0.0005,
+    "two_stage_training": false,
+    "stage2_epochs": null,
+    "num_clusters": 3,
+    "num_traces": 1,
+    "enable_diagnostics": true,
+    "diagnostic_sample_size": 5000,
+    "save_epoch_checkpoints": true
+  },
+  "loss": {
+    "loss_type": "scaled_lp",
+    "lambda_on": 8.0,
+    "lp_power": 4.0
+  },
+  "data": {
+    "d": 1024,
+    "sparsity": 2,
+    "noise_variance": 0.005,
+    "n_train": 300000,
+    "n_val": 5000,
+    "seed": 42,
+    "device": "cuda"
+  },
+  "experiment_name": "trajectory_experiment_l4",
+  "output_dir": null,
+  "save_model": false,
+  "save_plots": true
+}

@@ -38,26 +38,117 @@ def scaled_mse_loss(
     return loss_on_w + loss_off, loss_on_w, loss_off
 
 
-def logistic_loss(
+def scaled_lp_loss(
     output: torch.Tensor,
     label: torch.Tensor,
     lambda_on: float,
-    mask_on: Optional[torch.Tensor] = None
+    mask_on: Optional[torch.Tensor] = None,
+    p: float = 2.0
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Logistic loss function (placeholder for future implementation).
+    Custom loss function that separately weights on/off positions using Lp norm.
+    
+    Generalizes scaled_mse_loss to use |error|^p instead of |error|^2.
+    For p=2, this is equivalent to scaled_mse_loss.
     
     Args:
         output: Model predictions (B, d)
         label: Clean sparse signal (B, d)
         lambda_on: Weight for active position loss
         mask_on: Binary mask of active positions (B, d). If None, uses label as mask.
+        p: Power parameter for Lp norm (default: 2.0, which gives MSE)
     
     Returns:
         total_loss, loss_on_w, loss_off
     """
-    # Placeholder implementation - to be implemented
-    raise NotImplementedError("Logistic loss not yet implemented")
+    if mask_on is None:
+        mask_on = label
+    
+    err_on = (output - label) * mask_on
+    err_off = output * (1.0 - mask_on)
+    # Use abs() for numerical stability, though for even p it's not strictly necessary
+    loss_on_w = lambda_on * err_on.abs().pow(p).sum(dim=1).mean()
+    loss_off = err_off.abs().pow(p).sum(dim=1).mean()
+    return loss_on_w + loss_off, loss_on_w, loss_off
+
+
+def logistic_loss(
+    output: torch.Tensor,
+    label: torch.Tensor,
+    lambda_on: float,
+    mask_on: Optional[torch.Tensor] = None,
+    logsumexp_scale: Optional[float] = None,
+    lambda_off: float = 1.0
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Log-sum-exp loss function with masked on/off coordinates.
+    
+    Computes: log(sum_i [exp(lambda_on * (f(x)_i - x*_i)^2) * mask_on[i] + 
+                            exp(lambda_off * f(x)_i^2) * (1 - mask_on[i])])
+    
+    This loss uses different temperature parameters for signal (on) and off coordinates:
+    - lambda_on: Inverse temperature for on-coordinates (where target is non-zero)
+    - lambda_off: Inverse temperature for off-coordinates (where target is zero)
+    
+    The loss is scaled by logsumexp_scale (defaults to dimension d if None) to
+    compensate for the fact that log-sum-exp doesn't scale with dimension.
+    
+    Args:
+        output: Model predictions (B, d)
+        label: Clean sparse signal (B, d)
+        lambda_on: Inverse temperature parameter for on-coordinates
+        mask_on: Binary mask of active positions (B, d). If None, uses label as mask.
+        logsumexp_scale: Scaling factor. If None, defaults to dimension d (output.shape[-1])
+        lambda_off: Inverse temperature parameter for off-coordinates (default: 1.0)
+    
+    Returns:
+        (total_loss, loss_on, loss_off)
+        - total_loss: Scaled combined log-sum-exp loss averaged over batch
+        - loss_on: Scaled log-sum-exp over on-coordinates (diagnostic)
+        - loss_off: Scaled log-sum-exp over off-coordinates (diagnostic)
+    """
+    # Handle mask: use label if mask_on is None
+    if mask_on is None:
+        mask_on = label
+    
+    # Compute squared errors
+    # For on coordinates: (output - label)^2
+    # For off coordinates: output^2 (since target is 0)
+    squared_errors = (output - label) ** 2
+    squared_errors_off = output ** 2
+    
+    # Create temperature-scaled terms per coordinate
+    scaled_on = lambda_on * squared_errors * mask_on
+    scaled_off = lambda_off * squared_errors_off * (1.0 - mask_on)
+    combined_scaled = scaled_on + scaled_off
+    
+    # Compute combined log-sum-exp per sample
+    log_sum_exp_combined = torch.logsumexp(combined_scaled, dim=1)
+    
+    # Compute separate diagnostic terms for on and off coordinates
+    # Use large negative value for masked-out coordinates to prevent contribution to log-sum-exp
+    large_neg = torch.tensor(-1e10, device=output.device, dtype=output.dtype)
+    
+    # For loss_on: log-sum-exp only over on coordinates
+    scaled_on_masked = torch.where(mask_on > 0, scaled_on, large_neg)
+    loss_on_per_sample = torch.logsumexp(scaled_on_masked, dim=1)
+    
+    # For loss_off: log-sum-exp only over off coordinates
+    scaled_off_masked = torch.where(mask_on < 1, scaled_off, large_neg)
+    loss_off_per_sample = torch.logsumexp(scaled_off_masked, dim=1)
+    
+    # Determine scaling factor: use provided value or default to dimension d
+    if logsumexp_scale is None:
+        scale = float(output.shape[-1])  # Dimension d
+    else:
+        scale = logsumexp_scale
+    
+    # Average over batch and scale
+    total_loss = scale * log_sum_exp_combined.mean()
+    loss_on = scale * loss_on_per_sample.mean()
+    loss_off = scale * loss_off_per_sample.mean()
+    
+    return total_loss, loss_on, loss_off
 
 
 def create_loss_function(cfg: LossConfig) -> Callable[[torch.Tensor, torch.Tensor, Optional[torch.Tensor]], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
@@ -74,9 +165,14 @@ def create_loss_function(cfg: LossConfig) -> Callable[[torch.Tensor, torch.Tenso
         def loss_fn(output, label, mask_on=None):
             return scaled_mse_loss(output, label, cfg.lambda_on, mask_on)
         return loss_fn
+    elif cfg.loss_type == "scaled_lp":
+        p = cfg.lp_power if cfg.lp_power is not None else 2.0
+        def loss_fn(output, label, mask_on=None):
+            return scaled_lp_loss(output, label, cfg.lambda_on, mask_on, p)
+        return loss_fn
     elif cfg.loss_type == "logistic":
         def loss_fn(output, label, mask_on=None):
-            return logistic_loss(output, label, cfg.lambda_on, mask_on)
+            return logistic_loss(output, label, cfg.lambda_on, mask_on, cfg.logsumexp_scale, cfg.lambda_off)
         return loss_fn
     else:
         raise ValueError(f"Unknown loss type: {cfg.loss_type}")

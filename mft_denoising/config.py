@@ -42,8 +42,11 @@ class TrainingConfig:
 @dataclass
 class LossConfig:
     """Loss function configuration."""
-    loss_type: Literal["scaled_mse", "logistic"] = "scaled_mse"
+    loss_type: Literal["scaled_mse", "logistic", "scaled_lp"] = "scaled_mse"
     lambda_on: float = 10.0
+    lambda_off: float = 1.0  # Temperature parameter for off-coordinates in log-sum-exp loss
+    logsumexp_scale: Optional[float] = None  # Scaling factor for log-sum-exp loss. If None, defaults to dimension d.
+    lp_power: Optional[float] = None  # Power parameter p for Lp norm loss (scaled_lp). If None, defaults to 2.0.
 
 
 @dataclass
