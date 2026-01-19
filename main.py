@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 from typing import Optional, Tuple
 import sys
 from pathlib import Path
@@ -45,21 +46,53 @@ def train(
     """
     # Validate device - fall back to CPU if CUDA is requested but not available
     device_str = config.data.device
+    use_cuda = device_str.startswith("cuda") and torch.cuda.is_available()
     if device_str.startswith("cuda") and not torch.cuda.is_available():
         print(f"Warning: CUDA requested but not available. Falling back to CPU.")
         device_str = "cpu"
+        use_cuda = False
+    
     device = torch.device(device_str)
-    model = model.to(device)
+    
+    # Move model to CUDA if available (using .cuda() for better performance)
+    if use_cuda:
+        model = model.cuda()
+        # Compile model for better performance (PyTorch 2.0+)
+        if hasattr(torch, 'compile'):
+            model = torch.compile(model)
+    else:
+        model = model.to(device)
     
     # Create optimizer based on config
-    optimizer = create_optimizer(model, config.training)
+    optimizer = create_optimizer(model, config.training, use_cuda=use_cuda)
     
     # Create loss function based on config
     loss_fn = create_loss_function(config.loss)
     
+    # Create GradScaler for mixed precision training (only for CUDA)
+    scaler = torch.cuda.amp.GradScaler() if use_cuda else None
+    
+    # Create learning rate scheduler with warmup (only for standard optimizers, not SGLD)
+    scheduler = None
+    if config.training.enable_warmup and isinstance(optimizer, torch.optim.Optimizer):
+        total_steps = config.training.epochs * len(train_loader)
+        warmup_steps = int(config.training.warmup_fraction * total_steps)
+        
+        def lr_fn(step):
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            t = (step - warmup_steps) / (total_steps - warmup_steps)
+            return 0.5 * (1 + math.cos(math.pi * t))
+        
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_fn)
+        print(f"Learning rate scheduler enabled: {warmup_steps} warmup steps, {total_steps} total steps")
+    
     # Start tracking if provided
     if tracker is not None:
         tracker.start()
+    
+    # Track global step for scheduler
+    global_step = 0
     
     for epoch in range(config.training.epochs):
         model.train()
@@ -69,28 +102,70 @@ def train(
         total_train_loss_off = 0
         
         for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
+            # Use non_blocking=True for CUDA data transfer
+            if use_cuda:
+                data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            else:
+                data, target = data.to(device), target.to(device)
             
-            optimizer.zero_grad()
-            output = model(data)
+            # Use set_to_none=True for zero_grad when available
+            if hasattr(optimizer, 'zero_grad'):
+                if isinstance(optimizer, torch.optim.Optimizer):
+                    optimizer.zero_grad(set_to_none=True)
+                else:
+                    optimizer.zero_grad()
+            else:
+                optimizer.zero_grad()
             
-            # Compute loss using configured loss function
-            total_scaled_loss, loss_on_w, loss_off = loss_fn(
-                output=output,
-                label=target
-            )
+            # Mixed precision training for CUDA (only for standard optimizers, not SGLD)
+            if use_cuda and isinstance(optimizer, torch.optim.Optimizer):
+                with torch.cuda.amp.autocast(dtype=torch.float16):
+                    output = model(data)
+                    
+                    # Compute loss using configured loss function
+                    total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                        output=output,
+                        label=target
+                    )
+                    
+                    # Add L2 regularization for encoder and decoder
+                    encoder_l2 = torch.sum(model.fc1.weight ** 2)
+                    decoder_l2 = torch.sum(model.fc2.weight ** 2)
+                    
+                    # Total loss = scaled loss + regularization
+                    loss = (total_scaled_loss 
+                           + config.training.encoder_regularization * encoder_l2 
+                           + config.training.decoder_regularization * decoder_l2)
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Standard precision for CPU or SGLD optimizer
+                output = model(data)
+                
+                # Compute loss using configured loss function
+                total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                    output=output,
+                    label=target
+                )
+                
+                # Add L2 regularization for encoder and decoder
+                encoder_l2 = torch.sum(model.fc1.weight ** 2)
+                decoder_l2 = torch.sum(model.fc2.weight ** 2)
+                
+                # Total loss = scaled loss + regularization
+                loss = (total_scaled_loss 
+                       + config.training.encoder_regularization * encoder_l2 
+                       + config.training.decoder_regularization * decoder_l2)
+                
+                loss.backward()
+                optimizer.step()
             
-            # Add L2 regularization for encoder and decoder
-            encoder_l2 = torch.sum(model.fc1.weight ** 2)
-            decoder_l2 = torch.sum(model.fc2.weight ** 2)
-            
-            # Total loss = scaled loss + regularization
-            loss = (total_scaled_loss 
-                   + config.training.encoder_regularization * encoder_l2 
-                   + config.training.decoder_regularization * decoder_l2)
-            
-            loss.backward()
-            optimizer.step()
+            # Update learning rate scheduler
+            if scheduler is not None:
+                scheduler.step()
+                global_step += 1
             
             total_train_loss += loss.item()
             total_train_scaled_loss += total_scaled_loss.item()
@@ -98,8 +173,9 @@ def train(
             total_train_loss_off += loss_off.item()
             
             if batch_idx % 10 == 0:
+                current_lr = optimizer.param_groups[0]['lr'] if isinstance(optimizer, torch.optim.Optimizer) else config.training.learning_rate
                 print(f'Epoch: {epoch+1}, Batch: {batch_idx}, '
-                      f'Loss: {loss.item():.6f}, On-Loss: {loss_on_w.item():.6f}, Off-Loss: {loss_off.item():.6f}')
+                      f'Loss: {loss.item():.6f}, On-Loss: {loss_on_w.item():.6f}, Off-Loss: {loss_off.item():.6f}, LR: {current_lr:.6f}')
               
         avg_loss = total_train_loss / len(train_loader)
         avg_scaled_loss = total_train_scaled_loss / len(train_loader)   
@@ -122,10 +198,16 @@ def train(
             }
             tracker.log_epoch(epoch + 1, train_metrics, test_metrics, model=model)
             
-            # Save 2D encoder-decoder pairs plot at each epoch
+            # Save encoder-decoder weight pairs data or plot directly at each epoch
             if config.save_plots:
-                pairs_plot_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch+1:04d}.png')
-                plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
+                if config.plot_during_training:
+                    # Plot directly during training (allows viewing plots while training)
+                    pairs_plot_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch+1:04d}.png')
+                    plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
+                else:
+                    # Save data for later plotting (faster, no matplotlib blocking)
+                    pairs_data_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch+1:04d}.npz')
+                    save_encoder_decoder_pairs(model=model, save_path=pairs_data_path)
     
     return model
 
@@ -158,11 +240,22 @@ def train_stage2_decoder_only(
     """
     # Validate device - fall back to CPU if CUDA is requested but not available
     device_str = config.data.device
+    use_cuda = device_str.startswith("cuda") and torch.cuda.is_available()
     if device_str.startswith("cuda") and not torch.cuda.is_available():
         print(f"Warning: CUDA requested but not available. Falling back to CPU.")
         device_str = "cpu"
+        use_cuda = False
+    
     device = torch.device(device_str)
-    model = model.to(device)
+    
+    # Move model to CUDA if available (using .cuda() for better performance)
+    if use_cuda:
+        model = model.cuda()
+        # Compile model for better performance (PyTorch 2.0+)
+        if hasattr(torch, 'compile'):
+            model = torch.compile(model)
+    else:
+        model = model.to(device)
     
     # Ensure encoder is frozen
     model.fc1.weight.requires_grad = False
@@ -176,12 +269,42 @@ def train_stage2_decoder_only(
         optimizer = SGLD(decoder_params, lr=config.training.learning_rate, 
                         temperature=config.training.temperature)
     elif config.training.optimizer_type == "adam":
-        optimizer = torch.optim.Adam(decoder_params, lr=config.training.learning_rate)
+        # Use AdamW with fused=True on CUDA for better performance
+        if use_cuda:
+            weight_decay = getattr(config.training, 'weight_decay', 0.0)
+            optimizer = torch.optim.AdamW(
+                decoder_params,
+                lr=config.training.learning_rate,
+                betas=(0.9, 0.999),
+                weight_decay=weight_decay,
+                fused=True
+            )
+        else:
+            optimizer = torch.optim.Adam(decoder_params, lr=config.training.learning_rate)
     else:
         raise ValueError(f"Unknown optimizer type: {config.training.optimizer_type}")
     
     # Create loss function based on config
     loss_fn = create_loss_function(config.loss)
+    
+    # Create GradScaler for mixed precision training (only for CUDA)
+    scaler = torch.cuda.amp.GradScaler() if use_cuda else None
+    
+    # Create learning rate scheduler with warmup (only for standard optimizers, not SGLD)
+    scheduler = None
+    if config.training.enable_warmup and isinstance(optimizer, torch.optim.Optimizer):
+        stage2_epochs = config.training.stage2_epochs if config.training.stage2_epochs is not None else config.training.epochs
+        total_steps = stage2_epochs * len(train_loader)
+        warmup_steps = int(config.training.warmup_fraction * total_steps)
+        
+        def lr_fn(step):
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            t = (step - warmup_steps) / (total_steps - warmup_steps)
+            return 0.5 * (1 + math.cos(math.pi * t))
+        
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_fn)
+        print(f"Stage 2 learning rate scheduler enabled: {warmup_steps} warmup steps, {total_steps} total steps")
     
     # Determine epochs for stage 2
     stage2_epochs = config.training.stage2_epochs if config.training.stage2_epochs is not None else config.training.epochs
@@ -189,6 +312,9 @@ def train_stage2_decoder_only(
     print(f"Starting Stage 2 training (decoder only) for {stage2_epochs} epochs...")
     
     best_test_loss = float('inf')
+    
+    # Track global step for scheduler
+    global_step = 0
     
     for epoch in range(stage2_epochs):
         model.train()
@@ -198,26 +324,66 @@ def train_stage2_decoder_only(
         total_train_loss_off = 0
         
         for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
+            # Use non_blocking=True for CUDA data transfer
+            if use_cuda:
+                data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            else:
+                data, target = data.to(device), target.to(device)
             
-            optimizer.zero_grad()
-            output = model(data)
+            # Use set_to_none=True for zero_grad when available
+            if hasattr(optimizer, 'zero_grad'):
+                if isinstance(optimizer, torch.optim.Optimizer):
+                    optimizer.zero_grad(set_to_none=True)
+                else:
+                    optimizer.zero_grad()
+            else:
+                optimizer.zero_grad()
             
-            # Compute loss using configured loss function
-            total_scaled_loss, loss_on_w, loss_off = loss_fn(
-                output=output,
-                label=target
-            )
+            # Mixed precision training for CUDA (only for standard optimizers, not SGLD)
+            if use_cuda and isinstance(optimizer, torch.optim.Optimizer):
+                with torch.cuda.amp.autocast(dtype=torch.float16):
+                    output = model(data)
+                    
+                    # Compute loss using configured loss function
+                    total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                        output=output,
+                        label=target
+                    )
+                    
+                    # Only decoder regularization (encoder is frozen, so encoder reg = 0)
+                    decoder_l2 = torch.sum(model.fc2.weight ** 2)
+                    
+                    # Total loss = scaled loss + decoder regularization only
+                    loss = (total_scaled_loss 
+                           + config.training.decoder_regularization * decoder_l2)
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Standard precision for CPU or SGLD optimizer
+                output = model(data)
+                
+                # Compute loss using configured loss function
+                total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                    output=output,
+                    label=target
+                )
+                
+                # Only decoder regularization (encoder is frozen, so encoder reg = 0)
+                decoder_l2 = torch.sum(model.fc2.weight ** 2)
+                
+                # Total loss = scaled loss + decoder regularization only
+                loss = (total_scaled_loss 
+                       + config.training.decoder_regularization * decoder_l2)
+                
+                loss.backward()
+                optimizer.step()
             
-            # Only decoder regularization (encoder is frozen, so encoder reg = 0)
-            decoder_l2 = torch.sum(model.fc2.weight ** 2)
-            
-            # Total loss = scaled loss + decoder regularization only
-            loss = (total_scaled_loss 
-                   + config.training.decoder_regularization * decoder_l2)
-            
-            loss.backward()
-            optimizer.step()
+            # Update learning rate scheduler
+            if scheduler is not None:
+                scheduler.step()
+                global_step += 1
             
             total_train_loss += loss.item()
             total_train_scaled_loss += total_scaled_loss.item()
@@ -225,8 +391,9 @@ def train_stage2_decoder_only(
             total_train_loss_off += loss_off.item()
             
             if batch_idx % 10 == 0:
+                current_lr = optimizer.param_groups[0]['lr'] if isinstance(optimizer, torch.optim.Optimizer) else config.training.learning_rate
                 print(f'Stage 2 - Epoch: {epoch+1}, Batch: {batch_idx}, '
-                      f'Loss: {loss.item():.6f}, On-Loss: {loss_on_w.item():.6f}, Off-Loss: {loss_off.item():.6f}')
+                      f'Loss: {loss.item():.6f}, On-Loss: {loss_on_w.item():.6f}, Off-Loss: {loss_off.item():.6f}, LR: {current_lr:.6f}')
               
         avg_loss = total_train_loss / len(train_loader)
         avg_scaled_loss = total_train_scaled_loss / len(train_loader)   
@@ -253,11 +420,17 @@ def train_stage2_decoder_only(
             }
             tracker.log_epoch(epoch + 1 + config.training.epochs, train_metrics, test_metrics)  # Offset by stage 1 epochs
             
-            # Save 2D encoder-decoder pairs plot at each stage 2 epoch
+            # Save encoder-decoder weight pairs data or plot directly at each stage 2 epoch
             if config.save_plots:
                 epoch_num = epoch + 1 + config.training.epochs  # Offset by stage 1 epochs
-                pairs_plot_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch_num:04d}.png')
-                plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
+                if config.plot_during_training:
+                    # Plot directly during training (allows viewing plots while training)
+                    pairs_plot_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch_num:04d}.png')
+                    plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
+                else:
+                    # Save data for later plotting (faster, no matplotlib blocking)
+                    pairs_data_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch_num:04d}.npz')
+                    save_encoder_decoder_pairs(model=model, save_path=pairs_data_path)
     
     return model, best_test_loss
 
@@ -268,15 +441,32 @@ def evaluate(model, test_loader, loss_fn, device):
     test_total_scaled_loss = 0
     test_loss_on = 0
     test_loss_off = 0
+    
+    use_cuda = device.type == "cuda"
 
     with torch.no_grad():
         for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            total_scaled_loss, loss_on_w, loss_off = loss_fn(
-                output=output,
-                label=target
-            )
+            # Use non_blocking=True for CUDA data transfer
+            if use_cuda:
+                data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            else:
+                data, target = data.to(device), target.to(device)
+            
+            # Use mixed precision for evaluation on CUDA
+            if use_cuda:
+                with torch.cuda.amp.autocast(dtype=torch.float16):
+                    output = model(data)
+                    total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                        output=output,
+                        label=target
+                    )
+            else:
+                output = model(data)
+                total_scaled_loss, loss_on_w, loss_off = loss_fn(
+                    output=output,
+                    label=target
+                )
+            
             test_total_scaled_loss += total_scaled_loss.item()
             test_loss_on += loss_on_w.item()
             test_loss_off += loss_off.item()
@@ -575,20 +765,16 @@ def plot_network_outputs_histogram(model, data_loader=None, n_samples=1, bins=50
     
     return fig, ax
 
-def plot_encoder_decoder_pairs(model, figsize=(10, 8), save_path=None):
+def save_encoder_decoder_pairs(model, save_path):
     """
-    Plot 2D scatter plot of encoder-decoder weight pairs.
+    Save encoder-decoder weight pairs to disk for later plotting.
     
     Pairs encoder[i,j] with decoder[j,i] representing the same path:
     input j -> hidden i -> output j
     
     Args:
         model: TwoLayerNet instance
-        figsize: Figure size (width, height)
-        save_path: Optional path to save the figure
-    
-    Returns:
-        fig, ax: matplotlib figure and axis objects
+        save_path: Path to save the .npz file (will replace .png with .npz if needed)
     """
     # Extract encoder and decoder weights
     encoder_weights = model.fc1.weight.data.cpu().numpy()  # (hidden_size, input_size)
@@ -607,6 +793,61 @@ def plot_encoder_decoder_pairs(model, figsize=(10, 8), save_path=None):
     
     encoder_pairs = np.array(encoder_pairs)
     decoder_pairs = np.array(decoder_pairs)
+    
+    # Save to numpy format
+    # Convert PosixPath to string if needed
+    save_path = str(save_path)
+    if save_path.endswith('.png'):
+        save_path = save_path.replace('.png', '.npz')
+    elif not save_path.endswith('.npz'):
+        save_path = save_path + '.npz'
+    
+    np.savez(save_path, encoder_pairs=encoder_pairs, decoder_pairs=decoder_pairs,
+             hidden_size=hidden_size, input_size=input_size)
+    
+    return save_path
+
+
+def plot_encoder_decoder_pairs(model=None, figsize=(10, 8), save_path=None, data_path=None):
+    """
+    Plot 2D scatter plot of encoder-decoder weight pairs.
+    
+    Can plot from a model directly or from saved .npz data file.
+    
+    Args:
+        model: TwoLayerNet instance (if provided, extracts weights from model)
+        figsize: Figure size (width, height)
+        save_path: Path to save the figure
+        data_path: Path to .npz file with saved weight pairs (alternative to model)
+    
+    Returns:
+        fig, ax: matplotlib figure and axis objects
+    """
+    # Load data from file or extract from model
+    if data_path is not None:
+        data = np.load(data_path)
+        encoder_pairs = data['encoder_pairs']
+        decoder_pairs = data['decoder_pairs']
+    elif model is not None:
+        # Extract encoder and decoder weights
+        encoder_weights = model.fc1.weight.data.cpu().numpy()  # (hidden_size, input_size)
+        decoder_weights = model.fc2.weight.data.cpu().numpy()  # (input_size, hidden_size)
+        
+        hidden_size, input_size = encoder_weights.shape
+        
+        # Pair weights: encoder[i, j] with decoder[j, i]
+        encoder_pairs = []
+        decoder_pairs = []
+        
+        for i in range(hidden_size):
+            for j in range(input_size):
+                encoder_pairs.append(encoder_weights[i, j])
+                decoder_pairs.append(decoder_weights[j, i])
+        
+        encoder_pairs = np.array(encoder_pairs)
+        decoder_pairs = np.array(decoder_pairs)
+    else:
+        raise ValueError("Either model or data_path must be provided")
     
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
@@ -730,8 +971,11 @@ def main():
         encoder_plot_path = tracker.get_plot_path('encoder_weights_histogram.png')
         output_plot_path = tracker.get_plot_path('network_outputs_histogram.png')
         pairs_plot_path = tracker.get_plot_path('encoder_decoder_pairs.png')
+        pairs_data_path = tracker.get_plot_path('encoder_decoder_pairs.npz')
         plot_encoder_weights_histogram(model=model, save_path=encoder_plot_path)
         plot_network_outputs_histogram(model=model, data_loader=test_loader, save_path=output_plot_path)
+        # Save data for later plotting and also plot final model
+        save_encoder_decoder_pairs(model=model, save_path=pairs_data_path)
         plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
     
     # Stage 2 training: Frozen GMM encoder + decoder-only training
@@ -801,7 +1045,16 @@ def main():
                 encoder_initialization_scale=1.0,
                 decoder_initialization_scale=1.0,
             )
-            model_stage2 = model_stage2.to(device)
+            
+            # Move to device and compile if CUDA
+            use_cuda_stage2 = device_str.startswith("cuda") and torch.cuda.is_available()
+            if use_cuda_stage2:
+                model_stage2 = model_stage2.cuda()
+                # Compile model for better performance (PyTorch 2.0+)
+                if hasattr(torch, 'compile'):
+                    model_stage2 = torch.compile(model_stage2)
+            else:
+                model_stage2 = model_stage2.to(device)
             
             # Set frozen encoder weights
             model_stage2.fc1.weight.data = frozen_encoder.to(device)

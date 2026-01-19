@@ -37,6 +37,8 @@ class TrainingConfig:
     enable_diagnostics: bool = False  # Enable real-time blob formation diagnostics
     diagnostic_sample_size: int = 5000  # Number of weight pairs to sample per epoch for diagnostics
     save_epoch_checkpoints: bool = False  # Save model checkpoint after each epoch
+    enable_warmup: bool = True  # Enable learning rate warmup with cosine annealing
+    warmup_fraction: float = 0.05  # Fraction of total steps for warmup (default: 5%)
 
 
 @dataclass
@@ -60,6 +62,7 @@ class ExperimentConfig:
     output_dir: Optional[str] = None  # None = auto-generate with timestamp
     save_model: bool = True
     save_plots: bool = True
+    plot_during_training: bool = False  # If True, plot directly during training. If False, save .npz for later plotting.
 
     def to_dict(self) -> dict:
         """Convert config to dictionary for JSON serialization."""
@@ -72,6 +75,7 @@ class ExperimentConfig:
             "output_dir": self.output_dir,
             "save_model": self.save_model,
             "save_plots": self.save_plots,
+            "plot_during_training": self.plot_during_training,
         }
 
     @classmethod
@@ -86,6 +90,7 @@ class ExperimentConfig:
             output_dir=d.get("output_dir", None),
             save_model=d.get("save_model", True),
             save_plots=d.get("save_plots", True),
+            plot_during_training=d.get("plot_during_training", False),
         )
 
     def save_json(self, path: Path):

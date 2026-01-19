@@ -24,7 +24,7 @@
     "n_train": 100000,
     "n_val": 5000,
     "seed": 42,
-    "device": "cpu"
+    "device": "cuda"
   },
   "experiment_name": "regularizing_1",
   "output_dir": null,

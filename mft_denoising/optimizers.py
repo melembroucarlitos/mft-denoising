@@ -50,25 +50,39 @@ class SGLD:
                 p.grad.zero_()
 
 
-def create_optimizer(model, cfg: TrainingConfig) -> Union[SGLD, torch.optim.Optimizer]:
+def create_optimizer(model, cfg: TrainingConfig, use_cuda: bool = False) -> Union[SGLD, torch.optim.Optimizer]:
     """
     Factory function to create optimizer based on TrainingConfig.
     
     Args:
         model: PyTorch model
         cfg: Training configuration
+        use_cuda: Whether CUDA is available and being used
     
     Returns:
-        Optimizer instance (SGLD or torch.optim.Adam)
+        Optimizer instance (SGLD, torch.optim.Adam, or torch.optim.AdamW)
     
     Note:
-        Clean separation: returns either SGLD or ADAM based on optimizer_type.
+        Clean separation: returns either SGLD or ADAM/AdamW based on optimizer_type.
         Temperature parameter is only used for SGLD.
+        For CUDA, uses AdamW with fused=True for better performance.
     """
     if cfg.optimizer_type == "sgld":
         return SGLD(model.parameters(), lr=cfg.learning_rate, temperature=cfg.temperature)
     elif cfg.optimizer_type == "adam":
         # Temperature is ignored for ADAM
-        return torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+        # Use AdamW with fused=True on CUDA for better performance
+        if use_cuda:
+            # Extract weight_decay from config if available, default to 0
+            weight_decay = getattr(cfg, 'weight_decay', 0.0)
+            return torch.optim.AdamW(
+                model.parameters(), 
+                lr=cfg.learning_rate,
+                betas=(0.9, 0.999),
+                weight_decay=weight_decay,
+                fused=True
+            )
+        else:
+            return torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
     else:
         raise ValueError(f"Unknown optimizer type: {cfg.optimizer_type}")
