@@ -95,6 +95,18 @@ def run_sweep_experiment(
         result = load_results(experiment_name)
         training_time = time.time() - start_time
 
+        # Validate loaded results structure
+        if 'training_history' not in result:
+            raise ValueError(
+                f"Results missing 'training_history' key. "
+                f"Loaded from: {result.get('output_dir', 'unknown')}"
+            )
+        if not result['training_history']:
+            raise ValueError(
+                f"Results has empty 'training_history'. "
+                f"Loaded from: {result.get('output_dir', 'unknown')}"
+            )
+
         # Extract final metrics
         final_epoch = result['training_history'][-1]
 
@@ -123,11 +135,11 @@ def run_sweep_experiment(
             'error': str(e),
             'training_time_seconds': time.time() - start_time,
             'config_params': {
-                'learning_rate': config['training']['learning_rate'],
-                'batch_size': config['training']['batch_size'],
-                'encoder_init_scale': config['model']['encoder_initialization_scale'],
-                'decoder_init_scale': config['model']['decoder_initialization_scale'],
-                'epochs': config['training']['epochs']
+                'learning_rate': config.get('training', {}).get('learning_rate', 'unknown'),
+                'batch_size': config.get('training', {}).get('batch_size', 'unknown'),
+                'encoder_init_scale': config.get('model', {}).get('encoder_initialization_scale', 'unknown'),
+                'decoder_init_scale': config.get('model', {}).get('decoder_initialization_scale', 'unknown'),
+                'epochs': config.get('training', {}).get('epochs', 'unknown')
             }
         }
 

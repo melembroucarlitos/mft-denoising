@@ -1,0 +1,16 @@
+[
+  {
+    "success": true,
+    "name": "quick_ref",
+    "training_time_seconds": 270.0,
+    "final_test_loss": 8.988204956054688,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "final_correlation": 0.8821174961644976,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 5000,
+      "epochs": 8
+    }
+  }
+]

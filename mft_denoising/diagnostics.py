@@ -89,26 +89,42 @@ def get_all_weight_pairs(
 
 def compute_lightweight_clustering(
     weight_pairs: np.ndarray,
-    eps: float = 0.1,
-    min_samples: int = 50
+    eps: float = 0.05,
+    min_samples: int = 25
 ) -> Dict[str, Any]:
     """
     Fast DBSCAN clustering without GMM fitting (save GMM for post-training).
 
+    DBSCAN identifies "blobs" in weight pair space without assuming Gaussian
+    distributions. This is faster than GMM fitting and robust to noise.
+
     Args:
-        weight_pairs: (n_pairs, 2) array
-        eps: DBSCAN epsilon parameter (radius)
+        weight_pairs: (n_pairs, 2) array of [encoder, decoder] weight values
+        eps: DBSCAN epsilon parameter (cluster radius)
+             Points within eps distance are considered neighbors
+             Typical value: 0.05 for normalized weights (updated from 0.1)
         min_samples: DBSCAN minimum samples per cluster
+             Fewer points → noise (label = -1)
+             Typical value: 25 for 5K samples (updated from 50)
 
     Returns:
         Dictionary with:
-        - n_clusters_dbscan: Number of clusters found
-        - silhouette_score: Clustering quality (None if <2 clusters)
+        - n_clusters_dbscan: Number of clusters found (excluding noise)
+        - silhouette_score: Clustering quality in [-1, 1]
+            > 0.7: Excellent separation
+            0.5-0.7: Good separation
+            < 0.5: Weak or overlapping clusters
+            None: Single cluster or too much noise
         - cluster_centers: Top 3 cluster centroids [[enc, dec], ...]
         - n_noise_points: Number of noise points (-1 label)
 
     Performance:
         ~50ms for 5K samples (vs 300-500ms with GMM)
+
+    DBSCAN Overview:
+        1. Mark points with >= min_samples neighbors within eps as core points
+        2. Connect core points within eps distance into clusters
+        3. Label remaining points as noise (-1)
     """
     if not SKLEARN_AVAILABLE:
         return {
@@ -120,15 +136,19 @@ def compute_lightweight_clustering(
         }
 
     # DBSCAN clustering
+    # Returns labels: [0, 1, 2, ..., -1] where -1 indicates noise
     dbscan = DBSCAN(eps=eps, min_samples=min_samples)
     labels = dbscan.fit_predict(weight_pairs)
 
+    # Count clusters (excluding noise label -1)
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise = (labels == -1).sum()
 
     # Compute silhouette score if we have enough structure
+    # Silhouette measures how similar points are to their own cluster
+    # compared to other clusters
     silhouette = None
-    if n_clusters >= 2 and n_noise < len(labels) * 0.5:
+    if n_clusters >= 2 and n_noise < len(labels) * 0.5:  # Need >=2 clusters, not too much noise
         non_noise_mask = labels != -1
         if non_noise_mask.sum() > 0:
             try:
@@ -137,21 +157,28 @@ def compute_lightweight_clustering(
                     labels[non_noise_mask]
                 )
             except:
+                # Can fail if all points in same cluster or distance metric issues
                 silhouette = None
 
     # Extract cluster centers (top 3 by size)
+    # Useful for visualizing blob positions
     cluster_centers = []
     if n_clusters > 0:
+        # Get unique cluster labels (excluding -1 noise)
         unique_labels = [l for l in set(labels) if l != -1]
+
+        # Sort clusters by size (largest first)
         cluster_sizes = [(l, (labels == l).sum()) for l in unique_labels]
         cluster_sizes.sort(key=lambda x: x[1], reverse=True)
 
+        # Compute centroids for top 3 clusters
         for label, _ in cluster_sizes[:3]:  # Top 3 clusters
             cluster_mask = labels == label
-            center = weight_pairs[cluster_mask].mean(axis=0)
+            center = weight_pairs[cluster_mask].mean(axis=0)  # Average of all points in cluster
             cluster_centers.append([float(center[0]), float(center[1])])
 
-    # Fallback if no clusters found
+    # Fallback if no clusters found (all noise or single cluster)
+    # Use overall mean as "center"
     if not cluster_centers:
         cluster_centers = [[float(weight_pairs[:, 0].mean()),
                            float(weight_pairs[:, 1].mean())]]
@@ -192,8 +219,8 @@ def compute_lightweight_blob_metrics(
     model: torch.nn.Module,
     n_samples: int = 5000,
     compute_full_stats: bool = False,
-    eps: float = 0.1,
-    min_samples: int = 50
+    eps: float = 0.05,
+    min_samples: int = 25
 ) -> Dict[str, Any]:
     """
     Compute blob formation metrics on sampled weight pairs for real-time monitoring.

@@ -1,0 +1,6 @@
+Experiment Index to Name Mapping
+============================================================
+
+ 1. extended_baseline
+ 2. extended_large_init
+ 3. extended_small_batch

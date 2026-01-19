@@ -1,7 +1,27 @@
 """
-Experiment tracking and saving.
+Experiment tracking and results management.
 
-Handles saving experiment configurations, training metrics, and results to JSON files.
+This module provides the ExperimentTracker class, which serves as a centralized
+logging and persistence layer for experiments. It handles:
+    - Creating timestamped output directories
+    - Saving experiment configurations
+    - Recording per-epoch training metrics
+    - Computing real-time blob diagnostics (if enabled)
+    - Saving checkpoints
+    - Writing final results.json with full training history
+
+The tracker is designed to be used throughout a training run:
+    1. Initialize: tracker = ExperimentTracker(config)
+    2. Start: tracker.start() - creates directories, saves config
+    3. Log epochs: tracker.log_epoch(epoch, train_metrics, test_metrics, model)
+    4. Finalize: tracker.save_results() - writes results.json
+
+Output Structure:
+    experiments/
+    └── <experiment_name>_<timestamp>/
+        ├── config.json           # Full configuration as JSON
+        ├── results.json          # Training history and final metrics
+        └── checkpoint_epoch_*.pth  # Model checkpoints (if enabled)
 """
 
 import json
@@ -14,19 +34,54 @@ from mft_denoising.config import ExperimentConfig
 
 
 class ExperimentTracker:
-    """Tracks and saves experiment configuration and results."""
-    
+    """
+    Centralized logging and persistence for training experiments.
+
+    This class manages the entire lifecycle of an experiment:
+        - Directory creation with timestamps for uniqueness
+        - Configuration saving for reproducibility
+        - Per-epoch metrics logging (train/test losses, diagnostics)
+        - Optional real-time blob diagnostics (DBSCAN clustering, silhouette)
+        - Optional per-epoch checkpoint saving
+        - Final results.json with complete training history
+
+    The training history is maintained as a list of epoch dictionaries:
+        [
+            {
+                "epoch": 1,
+                "train": {"loss": 20.5, "scaled_loss": 18.2},
+                "test": {"scaled_loss": 19.1},
+                "diagnostics": {  # Only if enable_diagnostics=True
+                    "n_clusters_dbscan": 2,
+                    "silhouette_score": 0.65,
+                    "weight_correlation": 0.23,
+                    ...
+                }
+            },
+            ...
+        ]
+
+    This structured format enables:
+        - Easy loading and analysis in Python (json.load)
+        - Plotting training curves
+        - Comparing experiments via sweep analysis
+        - Debugging training failures
+    """
+
     def __init__(self, config: ExperimentConfig):
         """
-        Initialize experiment tracker.
-        
+        Initialize experiment tracker with configuration.
+
+        Creates output directory (or uses config.output_dir if specified).
+        Directory name format: experiments/<experiment_name>_<YYYYMMDD_HHMMSS>
+
         Args:
-            config: Experiment configuration
+            config: ExperimentConfig containing all experiment parameters
         """
         self.config = config
         self.output_dir = self._setup_output_dir()
-        self.train_history: List[Dict[str, float]] = []
-        self.start_time: Optional[float] = None
+        self.train_history: List[Dict[str, float]] = []  # Per-epoch metrics
+        self.start_time: Optional[float] = None  # Training start timestamp
         
     def _setup_output_dir(self) -> Path:
         """Setup output directory for experiment."""

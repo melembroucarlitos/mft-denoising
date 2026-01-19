@@ -1,0 +1,96 @@
+[
+  {
+    "success": true,
+    "name": "quick_ref",
+    "training_time_seconds": 270.0,
+    "final_test_loss": 8.988204956054688,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "final_correlation": 0.8821174961644976,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 5000,
+      "epochs": 8
+    }
+  },
+  {
+    "name": "quick_low_lr",
+    "success": true,
+    "training_time_seconds": 221.56574606895447,
+    "final_train_loss": 13.92895318667094,
+    "final_test_loss": 11.635697364807129,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.01,
+      "batch_size": 5000,
+      "encoder_init_scale": 0.03,
+      "decoder_init_scale": 0.03,
+      "epochs": 8
+    }
+  },
+  {
+    "name": "quick_high_lr",
+    "success": true,
+    "training_time_seconds": 223.1938123703003,
+    "final_train_loss": 15.78150496482849,
+    "final_test_loss": 9.880006790161133,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.04,
+      "batch_size": 5000,
+      "encoder_init_scale": 0.03,
+      "decoder_init_scale": 0.03,
+      "epochs": 8
+    }
+  },
+  {
+    "name": "quick_small_batch",
+    "success": true,
+    "training_time_seconds": 216.89943766593933,
+    "final_train_loss": 14.805803616841635,
+    "final_test_loss": 9.428807258605957,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 2500,
+      "encoder_init_scale": 0.03,
+      "decoder_init_scale": 0.03,
+      "epochs": 8
+    }
+  },
+  {
+    "name": "quick_large_batch",
+    "success": true,
+    "training_time_seconds": 229.58525609970093,
+    "final_train_loss": 14.326794783274332,
+    "final_test_loss": 11.56409740447998,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 10000,
+      "encoder_init_scale": 0.03,
+      "decoder_init_scale": 0.03,
+      "epochs": 8
+    }
+  },
+  {
+    "name": "quick_large_init",
+    "success": true,
+    "training_time_seconds": 223.54091119766235,
+    "final_train_loss": 13.151977348327637,
+    "final_test_loss": 8.98883056640625,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 5000,
+      "encoder_init_scale": 0.05,
+      "decoder_init_scale": 0.05,
+      "epochs": 8
+    }
+  }
+]

@@ -1,3 +1,33 @@
+"""
+Main training orchestration for MFT denoising experiments.
+
+This module implements the complete training pipeline for studying encoder-decoder
+weight pair decoupling in two-layer neural networks. It provides:
+
+    1. Stage 1 Training: Train both encoder and decoder from scratch
+       - Observe "blob" formation in weight pair space
+       - Track decoupling via real-time diagnostics
+       - Goal: Discover clean weight pair structure
+
+    2. Stage 2 Training (Optional): Leverage discovered structure
+       - Fit GMM to Stage 1 encoder weights
+       - Sample frozen encoders from GMM clusters
+       - Train new decoders to match frozen encoders
+       - Hypothesis: Should converge faster if blobs are meaningful
+
+The training flow supports:
+    - Multiple loss functions (MSE, scaled MSE)
+    - Multiple optimizers (ADAM, SGLD with temperature)
+    - L2 regularization (separate for encoder/decoder)
+    - Real-time blob diagnostics (DBSCAN clustering, silhouette scores)
+    - Comprehensive logging via ExperimentTracker
+
+Usage:
+    python main.py --config path/to/config.json
+    OR
+    python -c "from main import run_experiment; run_experiment(config_dict)"
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,17 +61,46 @@ def train(
     tracker: Optional[ExperimentTracker] = None,
 ):
     """
-    Train model using configured optimizer (SGLD or ADAM) with configured loss function.
-    
+    Stage 1 Training: Train both encoder and decoder from scratch.
+
+    This is the primary training function that optimizes both encoder (fc1) and
+    decoder (fc2) parameters. During training, encoder-decoder weight pairs may
+    form distinct "blobs" in 2D space, indicating clean mean field theory behavior.
+
+    Training Loop:
+        For each epoch:
+            1. Forward pass: predictions = model(batch)
+            2. Compute loss:
+                - Base loss (MSE or scaled MSE on predictions)
+                - L2 regularization on encoder weights
+                - L2 regularization on decoder weights
+            3. Backward pass and parameter update
+            4. Evaluate on test set
+            5. Optional: Compute real-time blob diagnostics
+            6. Log metrics to tracker
+
+    Loss Breakdown:
+        total_loss = scaled_loss + λ_enc × ||W_enc||² + λ_dec × ||W_dec||²
+
+        - scaled_loss: Position-weighted MSE (emphasizes active signal positions)
+        - encoder_l2: Sum of squared encoder weights (prevents explosion)
+        - decoder_l2: Sum of squared decoder weights
+
+    Diagnostics (if enabled):
+        - DBSCAN clustering on weight pairs
+        - Silhouette score (blob separation quality)
+        - Weight correlation (encoder-decoder coupling)
+        - Computation time: ~100ms per epoch for 5K samples
+
     Args:
-        model: TwoLayerNet model
-        train_loader: Training data loader
-        test_loader: Test data loader
-        config: Experiment configuration
-        tracker: Optional experiment tracker for logging
-    
+        model: TwoLayerNet with encoder (fc1) and decoder (fc2) layers
+        train_loader: DataLoader yielding (noisy_input, clean_target) batches
+        test_loader: DataLoader for evaluation
+        config: ExperimentConfig with all hyperparameters
+        tracker: Optional ExperimentTracker for logging and checkpointing
+
     Returns:
-        Trained model
+        Trained model with potentially decoupled weight pairs
     """
     # Validate device - fall back to CPU if CUDA is requested but not available
     device_str = config.data.device
@@ -50,69 +109,84 @@ def train(
         device_str = "cpu"
     device = torch.device(device_str)
     model = model.to(device)
-    
+
     # Create optimizer based on config
+    # Options: "adam" (deterministic) or "sgld" (with noise injection)
     optimizer = create_optimizer(model, config.training)
-    
+
     # Create loss function based on config
+    # Options: "mse" (standard) or "scaled_mse" (position-weighted)
     loss_fn = create_loss_function(config.loss)
-    
+
     # Start tracking if provided
+    # Creates output directory, saves config.json
     if tracker is not None:
         tracker.start()
-    
+
+    # Main training loop
     for epoch in range(config.training.epochs):
-        model.train()
-        total_train_loss = 0
-        total_train_scaled_loss = 0
-        total_train_loss_on_w = 0
-        total_train_loss_off = 0
-        
+        model.train()  # Enable dropout, batch norm training mode (though we don't use these)
+
+        # Accumulate losses over batches
+        total_train_loss = 0          # Loss with regularization
+        total_train_scaled_loss = 0   # Base loss without regularization
+        total_train_loss_on_w = 0     # Loss on active signal positions
+        total_train_loss_off = 0      # Loss on inactive (noise) positions
+
+        # Batch training loop
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
-            
-            optimizer.zero_grad()
-            output = model(data)
-            
+
+            optimizer.zero_grad()  # Clear gradients from previous batch
+            output = model(data)   # Forward pass
+
             # Compute loss using configured loss function
+            # Returns: (total_scaled_loss, loss_on_active, loss_on_inactive)
             total_scaled_loss, loss_on_w, loss_off = loss_fn(
                 output=output,
                 label=target
             )
-            
+
             # Add L2 regularization for encoder and decoder
-            encoder_l2 = torch.sum(model.fc1.weight ** 2)
-            decoder_l2 = torch.sum(model.fc2.weight ** 2)
-            
-            # Total loss = scaled loss + regularization
-            loss = (total_scaled_loss 
-                   + config.training.encoder_regularization * encoder_l2 
+            # Penalizes large weights to prevent overfitting and aid blob formation
+            encoder_l2 = torch.sum(model.fc1.weight ** 2)  # ||W_enc||²
+            decoder_l2 = torch.sum(model.fc2.weight ** 2)  # ||W_dec||²
+
+            # Total loss = base loss + regularization
+            # config.training.encoder_regularization and decoder_regularization are λ values
+            loss = (total_scaled_loss
+                   + config.training.encoder_regularization * encoder_l2
                    + config.training.decoder_regularization * decoder_l2)
-            
-            loss.backward()
-            optimizer.step()
-            
+
+            loss.backward()   # Compute gradients
+            optimizer.step()  # Update parameters (with noise if SGLD)
+
+            # Track metrics
             total_train_loss += loss.item()
             total_train_scaled_loss += total_scaled_loss.item()
             total_train_loss_on_w += loss_on_w.item()
             total_train_loss_off += loss_off.item()
-            
+
+            # Progress logging every 10 batches
             if batch_idx % 10 == 0:
                 print(f'Epoch: {epoch+1}, Batch: {batch_idx}, '
                       f'Loss: {loss.item():.6f}, On-Loss: {loss_on_w.item():.6f}, Off-Loss: {loss_off.item():.6f}')
-              
+
+        # Compute epoch averages
         avg_loss = total_train_loss / len(train_loader)
-        avg_scaled_loss = total_train_scaled_loss / len(train_loader)   
+        avg_scaled_loss = total_train_scaled_loss / len(train_loader)
         avg_loss_on_w = total_train_loss_on_w / len(train_loader)
         avg_loss_off = total_train_loss_off / len(train_loader)
-        
-        # Evaluate
+
+        # Evaluate on test set
         test_metrics = evaluate(model, test_loader, loss_fn, device)
         test_scaled_loss = test_metrics["scaled_loss"]
-        
+
+        # Print epoch summary
         print(f'Epoch {epoch+1}/{config.training.epochs}: Train Loss: {avg_loss:.6f}, Train Scaled Loss: {avg_scaled_loss:.6f}, Train On-Loss: {avg_loss_on_w:.6f}, Train Off-Loss: {avg_loss_off:.6f}, Test Scaled Loss: {test_scaled_loss:.6f}')
-        
+
         # Log epoch to tracker
+        # This triggers diagnostics computation if enable_diagnostics=True
         if tracker is not None:
             train_metrics = {
                 "loss": avg_loss,
@@ -120,13 +194,17 @@ def train(
                 "loss_on": avg_loss_on_w,
                 "loss_off": avg_loss_off,
             }
+            # tracker.log_epoch will:
+            # 1. Append metrics to training_history
+            # 2. Compute blob diagnostics if enabled (DBSCAN, silhouette, correlation)
+            # 3. Save checkpoint if save_epoch_checkpoints=True
             tracker.log_epoch(epoch + 1, train_metrics, test_metrics, model=model)
-            
-            # Save 2D encoder-decoder pairs plot at each epoch
+
+            # Save 2D encoder-decoder pairs plot at each epoch (if requested)
             if config.save_plots:
                 pairs_plot_path = tracker.get_plot_path(f'encoder_decoder_pairs_epoch_{epoch+1:04d}.png')
                 plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
-    
+
     return model
 
 

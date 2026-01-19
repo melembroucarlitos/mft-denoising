@@ -190,13 +190,16 @@ def load_results(experiment_name: str) -> Dict[str, Any]:
     if not matching_dirs:
         raise FileNotFoundError(f"No experiment found matching: {experiment_name}")
 
+    # Sort by modification time (most recent first)
+    matching_dirs = sorted(matching_dirs, key=lambda p: p.stat().st_mtime, reverse=True)
+
     if len(matching_dirs) > 1:
         print(f"Warning: Multiple experiments match '{experiment_name}':")
         for d in matching_dirs:
             print(f"  - {d.name}")
-        print(f"Using most recent: {matching_dirs[-1].name}")
+        print(f"Using most recent: {matching_dirs[0].name}")
 
-    results_path = matching_dirs[-1] / "results.json"
+    results_path = matching_dirs[0] / "results.json"
 
     with open(results_path) as f:
         return json.load(f)

@@ -1,0 +1,15 @@
+[
+  {
+    "success": true,
+    "name": "tiny_ref_lr02",
+    "training_time_seconds": 60.0,
+    "final_test_loss": 10.350132369995118,
+    "final_n_clusters": 1,
+    "final_silhouette": null,
+    "config_params": {
+      "learning_rate": 0.02,
+      "batch_size": 1000,
+      "epochs": 3
+    }
+  }
+]
