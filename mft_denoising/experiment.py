@@ -6,8 +6,10 @@ Handles saving experiment configurations, training metrics, and results to JSON 
 
 import json
 import time
+import numpy as np
+import random
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 
 from mft_denoising.config import ExperimentConfig
@@ -27,6 +29,7 @@ class ExperimentTracker:
         self.output_dir = self._setup_output_dir()
         self.train_history: List[Dict[str, float]] = []
         self.start_time: Optional[float] = None
+        self.colored_pairs: Optional[List[Tuple[int, int]]] = None  # Will be initialized in start() or initialize_colored_pairs()
         
     def _setup_output_dir(self) -> Path:
         """Setup output directory for experiment."""
@@ -40,9 +43,55 @@ class ExperimentTracker:
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
     
-    def start(self):
-        """Mark the start of training."""
+    def initialize_colored_pairs(self, hidden_size: int, input_size: int, seed: Optional[int] = None):
+        """
+        Initialize colored pairs for visualization.
+        
+        Args:
+            hidden_size: Hidden layer size (number of encoder neurons)
+            input_size: Input dimension (d)
+            seed: Random seed for pair selection (uses config seed if None)
+        """
+        if seed is None:
+            seed = self.config.data.seed
+        
+        random.seed(seed)
+        np.random.seed(seed)
+        
+        C = self.config.training.colored_points_count
+        total_pairs = hidden_size * input_size
+        
+        # Randomly select C pairs (i, j) without replacement
+        if C >= total_pairs:
+            # If C >= total pairs, select all pairs
+            pairs = [(i, j) for i in range(hidden_size) for j in range(input_size)]
+        else:
+            # Random selection without replacement
+            indices = np.random.choice(total_pairs, C, replace=False)
+            pairs = []
+            for idx in indices:
+                # Convert numpy int64 to Python int for JSON serializability
+                i = int(idx // input_size)
+                j = int(idx % input_size)
+                pairs.append((i, j))
+        
+        self.colored_pairs = pairs
+        print(f"Initialized {len(self.colored_pairs)} colored pairs for visualization")
+    
+    def start(self, model: Optional[Any] = None):
+        """
+        Mark the start of training.
+        
+        Args:
+            model: Optional model to initialize colored pairs from (if None, will be initialized later)
+        """
         self.start_time = time.time()
+        
+        # Initialize colored pairs if model is provided
+        if model is not None:
+            hidden_size = model.fc1.weight.shape[0]
+            input_size = model.fc1.weight.shape[1]
+            self.initialize_colored_pairs(hidden_size, input_size)
         
         # Save initial config
         config_path = self.output_dir / "config.json"
@@ -60,6 +109,26 @@ class ExperimentTracker:
             test_metrics: Dictionary of test metrics (e.g., {"scaled_loss": 0.3})
             model: Optional model for computing diagnostics (if enable_diagnostics=True)
         """
+        # Initialize colored pairs if not already done and model is provided
+        if self.colored_pairs is None and model is not None:
+            hidden_size = model.fc1.weight.shape[0]
+            input_size = model.fc1.weight.shape[1]
+            self.initialize_colored_pairs(hidden_size, input_size)
+        
+        # Compute encoder_above_0_5_count if model is provided
+        encoder_above_0_5_count = None
+        if model is not None:
+            encoder_weights = model.fc1.weight.data.cpu().numpy()
+            encoder_pairs = encoder_weights.flatten()
+            # Convert to Python int to ensure JSON serializability
+            count_result = np.sum(encoder_pairs > 0.5)
+            encoder_above_0_5_count = int(count_result.item() if hasattr(count_result, 'item') else count_result)
+            # Add to both train and test metrics
+            train_metrics = train_metrics.copy()
+            test_metrics = test_metrics.copy()
+            train_metrics["encoder_above_0_5_count"] = encoder_above_0_5_count
+            test_metrics["encoder_above_0_5_count"] = encoder_above_0_5_count
+        
         epoch_data = {
             "epoch": epoch,
             "train": train_metrics,
@@ -107,14 +176,36 @@ class ExperimentTracker:
         if self.start_time is not None:
             duration = time.time() - self.start_time
         
+        # Helper function to convert numpy types to Python native types for JSON serialization
+        def convert_to_native(obj):
+            """Recursively convert numpy types to Python native types."""
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {key: convert_to_native(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_native(item) for item in obj]
+            elif isinstance(obj, tuple):
+                return tuple(convert_to_native(item) for item in obj)
+            else:
+                return obj
+        
         # Compile results
         results = {
             "experiment_name": self.config.experiment_name,
             "output_dir": str(self.output_dir),
             "training_duration_seconds": duration,
-            "training_history": self.train_history,
-            "final_metrics": final_metrics or {},
+            "training_history": convert_to_native(self.train_history),
+            "final_metrics": convert_to_native(final_metrics or {}),
         }
+        
+        # Add colored pairs to results if initialized
+        if self.colored_pairs is not None:
+            results["colored_pairs"] = convert_to_native(self.colored_pairs)
         
         # Save results JSON
         results_path = self.output_dir / "results.json"

@@ -1,0 +1,36 @@
+{
+    "model": {
+      "hidden_size": 2048,
+      "encoder_initialization_scale": 0.05,
+      "decoder_initialization_scale": 0.1
+    },
+    "training": {
+      "optimizer_type": "adam",
+      "learning_rate": 0.005,
+      "temperature": 0.0,
+      "epochs": 60,
+      "batch_size": 1024,
+      "encoder_regularization": 0.0005,
+      "decoder_regularization": 0.0002,
+      "two_stage_training": false
+    },
+    "loss": {
+      "loss_type": "scaled_mse",
+      "lambda_on": 4.0
+    },
+    "data": {
+      "d": 512,
+      "sparsity": 3,
+      "noise_variance": 0.003,
+      "n_train": 100000,
+      "n_val": 5000,
+      "seed": 42,
+      "device": "cuda"
+    },
+    "experiment_name": "overparam",
+    "output_dir": null,
+    "save_model": true,
+    "save_epoch_checkpoints": false,
+    "save_plots": true,
+    "plot_during_training": true
+  }

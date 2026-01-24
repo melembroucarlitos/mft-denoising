@@ -1,0 +1,76 @@
+{
+  "_documentation": {
+    "note": "This is an example configuration file for two-stage SGLD-Adam training.",
+    "parameter_dependencies": {
+      "epochs": "Base epochs parameter (legacy, not used in two-stage training). Ignored if sgld_epochs or adam_epochs are set.",
+      "sgld_epochs": "Number of epochs for Stage 1 (SGLD). If null, defaults to 'epochs' parameter.",
+      "adam_epochs": "Number of epochs for Stage 2 (Adam). If null, defaults to 'epochs' parameter.",
+      "learning_rate": "Base learning rate (legacy). Used as fallback if stage-specific rates not set.",
+      "sgld_learning_rate": "Learning rate for Stage 1 (SGLD). If null, defaults to 'learning_rate'.",
+      "adam_learning_rate": "Learning rate for Stage 2 (Adam). If null, defaults to 'sgld_learning_rate', then 'learning_rate'.",
+      "temperature": "Base temperature (legacy, for SGLD). Used as fallback if sgld_temperature not set.",
+      "sgld_temperature": "Temperature for Stage 1 (SGLD) noise. If null, defaults to 'temperature'."
+    },
+    "recommended_usage": "Set sgld_epochs, adam_epochs, sgld_learning_rate, sgld_temperature, and adam_learning_rate explicitly. The 'epochs', 'learning_rate', and 'temperature' parameters are kept for backward compatibility but are not used in two-stage training."
+  },
+  "model": {
+    "hidden_size": 128,
+    "encoder_initialization_scale": 1.0,
+    "decoder_initialization_scale": 1.0
+  },
+  "training": {
+    "_comment_optimizer": "optimizer_type is kept for compatibility but not used in two-stage training",
+    "optimizer_type": "sgld",
+    
+    "_comment_legacy_params": "These parameters are legacy/fallback values. They are NOT used if stage-specific parameters are set below.",
+    "learning_rate": 0.0001,
+    "temperature": 0.0,
+    "epochs": 1,
+    
+    "_comment_shared_params": "These parameters are shared between both stages:",
+    "batch_size": 128,
+    "encoder_regularization": 0.0,
+    "decoder_regularization": 0.0,
+    "enable_warmup": true,
+    "warmup_fraction": 0.05,
+    
+    "_comment_stage1": "=== STAGE 1 (SGLD) PARAMETERS ===",
+    "_comment_stage1_epochs": "sgld_epochs: If null, falls back to 'epochs' parameter above",
+    "sgld_epochs": 50,
+    "_comment_stage1_lr": "sgld_learning_rate: If null, falls back to 'learning_rate' parameter above",
+    "sgld_learning_rate": 0.0001,
+    "_comment_stage1_temp": "sgld_temperature: If null, falls back to 'temperature' parameter above",
+    "sgld_temperature": 0.1,
+    
+    "_comment_stage2": "=== STAGE 2 (ADAM) PARAMETERS ===",
+    "_comment_stage2_epochs": "adam_epochs: If null, falls back to 'epochs' parameter above",
+    "adam_epochs": 50,
+    "_comment_stage2_lr": "adam_learning_rate: If null, falls back to 'sgld_learning_rate', then 'learning_rate'",
+    "adam_learning_rate": 0.0001,
+    
+    "_comment_visualization": "=== VISUALIZATION PARAMETERS ===",
+    "colored_points_count": 20,
+    
+    "_comment_resume": "=== CHECKPOINT RESUMPTION ===",
+    "_comment_resume_note": "resume_from_checkpoint: Path to checkpoint file (.pth) to resume training from. Architecture must match (hidden_size, d). If null, training starts from scratch.",
+    "resume_from_checkpoint": null
+  },
+  "loss": {
+    "loss_type": "scaled_mse",
+    "lambda_on": 10.0
+  },
+  "data": {
+    "d": 32,
+    "sparsity": 2,
+    "noise_variance": 0.1,
+    "n_train": 1000000,
+    "n_val": 1000,
+    "seed": 42,
+    "device": "cuda"
+  },
+  "experiment_name": "sgld_adam_experiment",
+  "output_dir": null,
+  "save_model": true,
+  "save_plots": true,
+  "plot_during_training": false
+}

@@ -1,0 +1,53 @@
+{
+  "temperature_values": [
+    0.0003,
+    0.0001,
+    3.3e-05,
+    1.1e-05,
+    3.6e-06,
+    1.2e-06
+  ],
+  "results": [
+    {
+      "temperature": 0.0003,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000300000.json",
+      "success": true,
+      "return_code": 0
+    },
+    {
+      "temperature": 0.0001,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000100000.json",
+      "success": true,
+      "return_code": 0
+    },
+    {
+      "temperature": 3.3e-05,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000033000.json",
+      "success": true,
+      "return_code": 0
+    },
+    {
+      "temperature": 1.1e-05,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000011000.json",
+      "success": true,
+      "return_code": 0
+    },
+    {
+      "temperature": 3.6e-06,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000003600.json",
+      "success": true,
+      "return_code": 0
+    },
+    {
+      "temperature": 1.2e-06,
+      "config_path": "/home/ubuntu/code/mft-denoising/experiments_sgld_adam/sweep_configs/config_temp_0.000001200.json",
+      "success": true,
+      "return_code": 0
+    }
+  ],
+  "summary": {
+    "total": 6,
+    "successful": 6,
+    "failed": 0
+  }
+}

@@ -17,6 +17,24 @@ class DataConfig:
     seed: int = 42
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
+
+@dataclass
+class DualInputDataConfig:
+    """Data configuration for dual input types with separate dimensions."""
+    d_1: int  # Dimension of input type 1
+    d_2: int  # Dimension of input type 2
+    sparsity: int  # Total sparsity across d_1 + d_2
+    noise_variance: float = 0.03
+    n_train: int = 100_000
+    n_val: int = 10_000
+    seed: int = 42
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    @property
+    def d_total(self) -> int:
+        """Total input dimension."""
+        return self.d_1 + self.d_2
+
 class TwoHotStream:
     """
     Generates B samples with s active coordinates (set to 1) in a d-dimensional vector,
@@ -117,6 +135,114 @@ def create_dataloaders(cfg: DataConfig, batch_size: int = 128, num_workers: int 
         train_dataset,
         batch_size=batch_size,
         shuffle=True,  # Shuffle indices (though samples are random anyway)
+        num_workers=num_workers,
+        pin_memory=True if cfg.device == "cuda" else False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True if cfg.device == "cuda" else False
+    )
+    
+    return train_loader, val_loader
+
+
+class DualInputTwoHotStream:
+    """
+    Generates B samples with s active coordinates (set to 1) in a (d_1 + d_2)-dimensional vector,
+    where coordinates 0..d_1-1 are type 1 and d_1..d_1+d_2-1 are type 2.
+    Sparse signal is chosen randomly across the full d_1 + d_2 dimensional space.
+    Plus iid Gaussian noise with variance eta2.
+    
+    Returns (x, x_star) where x_star is the clean two-hot.
+    
+    Note: Data is always generated on CPU to support pin_memory in DataLoader.
+    """
+    def __init__(self, cfg: DualInputDataConfig):
+        self.cfg = cfg
+        set_seed(cfg.seed)
+        self.device = torch.device("cpu")
+        random.seed(torch.initial_seed() & 0xFFFFFFFF)
+    
+    @torch.no_grad()
+    def sample_batch(self, B: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        d_total = self.cfg.d_total
+        sparsity = self.cfg.sparsity
+        eta2 = self.cfg.noise_variance
+        
+        # Randomly select sparsity coordinates from full d_1 + d_2 space
+        idx = torch.stack([torch.randperm(d_total, device=self.device)[:sparsity] for _ in range(B)], dim=0)
+        x_star = torch.zeros(B, d_total, device=self.device)
+        x_star.scatter_(1, idx, 1.0)
+        noise = torch.randn(B, d_total, device=self.device) * math.sqrt(eta2)
+        x = x_star + noise
+        return x, x_star
+
+
+class DualInputTwoHotDataset(Dataset):
+    """PyTorch Dataset wrapper for DualInputTwoHotStream."""
+    def __init__(self, stream: DualInputTwoHotStream, size: int):
+        self.stream = stream
+        self.size = size
+        
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, idx):
+        x, x_star = self.stream.sample_batch(1)
+        return x.squeeze(0), x_star.squeeze(0)
+
+
+def create_dual_input_dataloaders(cfg: DualInputDataConfig, batch_size: int = 128, num_workers: int = 0):
+    """
+    Create train and validation dataloaders for dual input experiment.
+    
+    Args:
+        cfg: DualInputDataConfig with dataset parameters
+        batch_size: Batch size for dataloaders
+        num_workers: Number of worker processes for data loading
+        
+    Returns:
+        train_loader, val_loader
+    """
+    # Create separate streams for train and val (different seeds)
+    train_cfg = DualInputDataConfig(
+        d_1=cfg.d_1,
+        d_2=cfg.d_2,
+        sparsity=cfg.sparsity,
+        noise_variance=cfg.noise_variance,
+        n_train=cfg.n_train,
+        n_val=cfg.n_val,
+        seed=cfg.seed,
+        device=cfg.device
+    )
+    
+    val_cfg = DualInputDataConfig(
+        d_1=cfg.d_1,
+        d_2=cfg.d_2,
+        sparsity=cfg.sparsity,
+        noise_variance=cfg.noise_variance,
+        n_train=cfg.n_train,
+        n_val=cfg.n_val,
+        seed=cfg.seed + 1,  # Different seed for validation
+        device=cfg.device
+    )
+    
+    train_stream = DualInputTwoHotStream(train_cfg)
+    val_stream = DualInputTwoHotStream(val_cfg)
+    
+    # Create datasets
+    train_dataset = DualInputTwoHotDataset(train_stream, cfg.n_train)
+    val_dataset = DualInputTwoHotDataset(val_stream, cfg.n_val)
+    
+    # Create dataloaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
         num_workers=num_workers,
         pin_memory=True if cfg.device == "cuda" else False
     )

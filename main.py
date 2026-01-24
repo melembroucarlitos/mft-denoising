@@ -4,9 +4,10 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import sys
 from pathlib import Path
+from multiprocessing import Pool, cpu_count
 
 from mft_denoising.data import create_dataloaders
 from mft_denoising.nn import TwoLayerNet
@@ -808,7 +809,8 @@ def save_encoder_decoder_pairs(model, save_path):
     return save_path
 
 
-def plot_encoder_decoder_pairs(model=None, figsize=(10, 8), save_path=None, data_path=None):
+def plot_encoder_decoder_pairs(model=None, figsize=(10, 8), save_path=None, data_path=None, 
+                                colored_pairs=None, colored_colors=None):
     """
     Plot 2D scatter plot of encoder-decoder weight pairs.
     
@@ -819,41 +821,68 @@ def plot_encoder_decoder_pairs(model=None, figsize=(10, 8), save_path=None, data
         figsize: Figure size (width, height)
         save_path: Path to save the figure
         data_path: Path to .npz file with saved weight pairs (alternative to model)
+        colored_pairs: Optional list of (i, j) tuples to highlight with distinct colors
+        colored_colors: Optional list of colors for colored_pairs (defaults to tab20 colormap)
     
     Returns:
         fig, ax: matplotlib figure and axis objects
     """
     # Load data from file or extract from model
+    encoder_weights_full = None
+    decoder_weights_full = None
+    
     if data_path is not None:
         data = np.load(data_path)
         encoder_pairs = data['encoder_pairs']
         decoder_pairs = data['decoder_pairs']
+        # For colored pairs, we need the full weight matrices, but they're not in .npz
+        # So colored pairs won't work with data_path (would need to save full matrices)
     elif model is not None:
         # Extract encoder and decoder weights
-        encoder_weights = model.fc1.weight.data.cpu().numpy()  # (hidden_size, input_size)
-        decoder_weights = model.fc2.weight.data.cpu().numpy()  # (input_size, hidden_size)
+        encoder_weights_full = model.fc1.weight.data.cpu().numpy()  # (hidden_size, input_size)
+        decoder_weights_full = model.fc2.weight.data.cpu().numpy()  # (input_size, hidden_size)
         
-        hidden_size, input_size = encoder_weights.shape
+        hidden_size, input_size = encoder_weights_full.shape
         
         # Pair weights: encoder[i, j] with decoder[j, i]
-        encoder_pairs = []
-        decoder_pairs = []
-        
-        for i in range(hidden_size):
-            for j in range(input_size):
-                encoder_pairs.append(encoder_weights[i, j])
-                decoder_pairs.append(decoder_weights[j, i])
-        
-        encoder_pairs = np.array(encoder_pairs)
-        decoder_pairs = np.array(decoder_pairs)
+        # Vectorized: encoder[i,j] in row-major order pairs with decoder[j,i] via transpose
+        encoder_pairs = encoder_weights_full.flatten()  # Row-major: [enc[0,0], enc[0,1], ..., enc[0,d-1], enc[1,0], ...]
+        decoder_pairs = decoder_weights_full.T.flatten()  # Transpose then flatten: [dec[0,0], dec[1,0], ..., dec[d-1,0], dec[0,1], ...]
     else:
         raise ValueError("Either model or data_path must be provided")
+    
+    # Compute axis limits from all pairs first (before plotting colored points)
+    xlim = (encoder_pairs.min(), encoder_pairs.max())
+    ylim = (decoder_pairs.min(), decoder_pairs.max())
     
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
     
-    # Create scatter plot (each point as a pixel)
-    ax.scatter(encoder_pairs, decoder_pairs, s=0.5, alpha=0.3, color='blue', rasterized=True)
+    # Create scatter plot (each point as a pixel) - background
+    ax.scatter(encoder_pairs, decoder_pairs, s=0.5, alpha=0.3, color='blue', rasterized=True, zorder=1)
+    
+    # Plot colored points on top if provided
+    if colored_pairs is not None and encoder_weights_full is not None and decoder_weights_full is not None:
+        # Generate colors if not provided
+        if colored_colors is None:
+            cmap = plt.cm.tab20
+            colored_colors = [cmap(i % 20) for i in range(len(colored_pairs))]
+        
+        # Extract values for colored pairs
+        colored_encoder = []
+        colored_decoder = []
+        for i, j in colored_pairs:
+            colored_encoder.append(encoder_weights_full[i, j])
+            colored_decoder.append(decoder_weights_full[j, i])
+        
+        # Plot colored points with distinct colors, larger size, higher zorder
+        for idx, (enc_val, dec_val, color) in enumerate(zip(colored_encoder, colored_decoder, colored_colors)):
+            ax.scatter([enc_val], [dec_val], s=50, color=color, edgecolors='black', 
+                      linewidths=1, zorder=10, alpha=0.8, label=f'Point {idx+1}' if idx < 10 else None)
+    
+    # Set axis limits (computed from all pairs, not affected by colored points)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
     
     # Add labels and title
     ax.set_xlabel('Encoder Weight', fontsize=12)
@@ -882,6 +911,62 @@ def plot_encoder_decoder_pairs(model=None, figsize=(10, 8), save_path=None, data
         print(f"Figure saved to: {save_path}")
     
     return fig, ax
+
+
+def generate_plots_from_saved_data(experiment_dir: Path, n_jobs: Optional[int] = None):
+    """
+    Generate plots from all saved .npz files in the experiment directory.
+    
+    Args:
+        experiment_dir: Path to experiment directory containing .npz files
+        n_jobs: Number of parallel jobs (default: cpu_count())
+    """
+    # Find all epoch .npz files
+    pattern = "encoder_decoder_pairs_epoch_*.npz"
+    epoch_files = sorted(experiment_dir.glob(pattern))
+    
+    if not epoch_files:
+        print("No encoder_decoder_pairs_epoch_*.npz files found to plot.")
+        return
+    
+    print(f"\nGenerating plots from {len(epoch_files)} saved epoch files...")
+    
+    # Prepare arguments: (data_path, output_path)
+    plot_args = []
+    for data_file in epoch_files:
+        # Convert .npz to .png
+        output_file = data_file.with_suffix('.png')
+        plot_args.append((str(data_file), str(output_file)))
+    
+    # Determine number of parallel jobs
+    if n_jobs is None:
+        n_jobs = cpu_count()
+    n_jobs = min(n_jobs, len(plot_args))  # Don't use more jobs than files
+    
+    # Helper function for multiprocessing
+    def plot_single_file(args):
+        data_path, output_path = args
+        try:
+            plot_encoder_decoder_pairs(data_path=data_path, save_path=output_path)
+            return f"Generated {Path(output_path).name}"
+        except Exception as e:
+            return f"Error plotting {Path(output_path).name}: {e}"
+    
+    # Generate plots in parallel
+    if n_jobs > 1 and len(plot_args) > 1:
+        print(f"Using {n_jobs} parallel workers...")
+        with Pool(n_jobs) as pool:
+            results = pool.map(plot_single_file, plot_args)
+        for result in results:
+            print(f"  {result}")
+    else:
+        # Generate plots sequentially
+        for data_path, output_path in plot_args:
+            result = plot_single_file((data_path, output_path))
+            print(f"  {result}")
+    
+    print(f"Generated {len(plot_args)} plot(s) from saved data.")
+
 
 def main():
     # Load config from JSON file if provided, otherwise use defaults
@@ -977,6 +1062,10 @@ def main():
         # Save data for later plotting and also plot final model
         save_encoder_decoder_pairs(model=model, save_path=pairs_data_path)
         plot_encoder_decoder_pairs(model=model, save_path=pairs_plot_path)
+        
+        # Generate plots from all saved .npz epoch files if plot_during_training was False
+        if not config.plot_during_training:
+            generate_plots_from_saved_data(tracker.output_dir)
     
     # Stage 2 training: Frozen GMM encoder + decoder-only training
     stage2_clustering_params = None
@@ -1116,6 +1205,10 @@ def main():
         print(f"Best trace test loss: {best_trace_loss:.6f}")
         print(f"Best improvement: {best_trace_loss - initial_test_loss:+.6f}")
         print("=" * 80)
+        
+        # Generate plots from all saved .npz epoch files if plot_during_training was False
+        if config.save_plots and not config.plot_during_training:
+            generate_plots_from_saved_data(tracker.output_dir)
     
     # Save final results
     final_metrics = {}

@@ -5,11 +5,11 @@ Supports both programmatic configuration and loading from JSON files.
 """
 
 from dataclasses import dataclass, asdict
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 import json
 from pathlib import Path
 
-from mft_denoising.data import DataConfig
+from mft_denoising.data import DataConfig, DualInputDataConfig
 
 
 @dataclass
@@ -39,16 +39,29 @@ class TrainingConfig:
     save_epoch_checkpoints: bool = False  # Save model checkpoint after each epoch
     enable_warmup: bool = True  # Enable learning rate warmup with cosine annealing
     warmup_fraction: float = 0.05  # Fraction of total steps for warmup (default: 5%)
+    # Two-stage SGLD-Adam training parameters
+    sgld_epochs: Optional[int] = None  # Number of epochs for SGLD stage (t_1). If None, uses epochs.
+    adam_epochs: Optional[int] = None  # Number of epochs for Adam stage (t_2). If None, uses epochs.
+    sgld_learning_rate: Optional[float] = None  # Learning rate for SGLD stage. If None, uses learning_rate.
+    sgld_temperature: Optional[float] = None  # Temperature for SGLD stage. If None, uses temperature.
+    adam_learning_rate: Optional[float] = None  # Learning rate for Adam stage. If None, uses sgld_learning_rate or learning_rate.
+    colored_points_count: int = 20  # Number of distinct colored points to track for visualization (C)
+    resume_from_checkpoint: Optional[str] = None  # Path to checkpoint file to resume training from (must match architecture)
 
 
 @dataclass
 class LossConfig:
     """Loss function configuration."""
-    loss_type: Literal["scaled_mse", "logistic", "scaled_lp"] = "scaled_mse"
+    loss_type: Literal["scaled_mse", "logistic", "scaled_lp", "dual_lambda_scaled_mse"] = "scaled_mse"
     lambda_on: float = 10.0
     lambda_off: float = 1.0  # Temperature parameter for off-coordinates in log-sum-exp loss
     logsumexp_scale: Optional[float] = None  # Scaling factor for log-sum-exp loss. If None, defaults to dimension d.
     lp_power: Optional[float] = None  # Power parameter p for Lp norm loss (scaled_lp). If None, defaults to 2.0.
+    # Dual lambda parameters (for dual_lambda_scaled_mse)
+    lambda_1: Optional[float] = None  # Lambda for input type 1 (coordinates 0..d_1-1)
+    lambda_2: Optional[float] = None  # Lambda for input type 2 (coordinates d_1..d_1+d_2-1)
+    lambda_off_1: Optional[float] = None  # Lambda for off-coordinates in type 1 (default: 1.0)
+    lambda_off_2: Optional[float] = None  # Lambda for off-coordinates in type 2 (default: 1.0)
 
 
 @dataclass
@@ -57,7 +70,7 @@ class ExperimentConfig:
     model: ModelConfig
     training: TrainingConfig
     loss: LossConfig
-    data: DataConfig
+    data: Union[DataConfig, DualInputDataConfig]  # Support both standard and dual input configs
     experiment_name: str = "experiment"
     output_dir: Optional[str] = None  # None = auto-generate with timestamp
     save_model: bool = True

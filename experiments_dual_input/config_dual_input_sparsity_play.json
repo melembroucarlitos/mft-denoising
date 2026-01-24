@@ -1,0 +1,42 @@
+{
+  "model": {
+    "hidden_size": 1024,
+    "encoder_initialization_scale": 0.03,
+    "decoder_initialization_scale": 0.03
+  },
+  "training": {
+    "optimizer_type": "adam",
+    "learning_rate": 0.0015,
+    "temperature": 0.0,
+    "epochs": 30,
+    "batch_size": 256,
+    "encoder_regularization": 0.0,
+    "decoder_regularization": 0.01,
+    "enable_warmup": true,
+    "warmup_fraction": 0.05,
+    "two_stage_training": false
+  },
+  "loss": {
+    "loss_type": "dual_lambda_scaled_mse",
+    "lambda_1": 64.0,
+    "lambda_2": 8.0,
+    "lambda_off_1": 4.0,
+    "lambda_off_2": 1.0
+  },
+  "data": {
+    "d_1": 256,
+    "d_2": 2048,
+    "sparsity": 3,
+    "noise_variance": 0.001,
+    "n_train": 2000000,
+    "n_val": 5000,
+    "seed": 42,
+    "device": "cuda"
+  },
+  "experiment_name": "dual_input_sparsity_play",
+  "output_dir": null,
+  "save_model": true,
+  "save_epoch_checkpoints": false,
+  "save_plots": true,
+  "plot_during_training": true
+}

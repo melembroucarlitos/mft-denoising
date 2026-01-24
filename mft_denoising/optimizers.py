@@ -67,8 +67,12 @@ def create_optimizer(model, cfg: TrainingConfig, use_cuda: bool = False) -> Unio
         Temperature parameter is only used for SGLD.
         For CUDA, uses AdamW with fused=True for better performance.
     """
+    # Handle None learning_rate by using default
+    learning_rate = cfg.learning_rate if cfg.learning_rate is not None else 1e-4
+    temperature = cfg.temperature if cfg.temperature is not None else 0.0
+    
     if cfg.optimizer_type == "sgld":
-        return SGLD(model.parameters(), lr=cfg.learning_rate, temperature=cfg.temperature)
+        return SGLD(model.parameters(), lr=learning_rate, temperature=temperature)
     elif cfg.optimizer_type == "adam":
         # Temperature is ignored for ADAM
         # Use AdamW with fused=True on CUDA for better performance
@@ -77,12 +81,12 @@ def create_optimizer(model, cfg: TrainingConfig, use_cuda: bool = False) -> Unio
             weight_decay = getattr(cfg, 'weight_decay', 0.0)
             return torch.optim.AdamW(
                 model.parameters(), 
-                lr=cfg.learning_rate,
+                lr=learning_rate,
                 betas=(0.9, 0.999),
                 weight_decay=weight_decay,
                 fused=True
             )
         else:
-            return torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+            return torch.optim.Adam(model.parameters(), lr=learning_rate)
     else:
         raise ValueError(f"Unknown optimizer type: {cfg.optimizer_type}")

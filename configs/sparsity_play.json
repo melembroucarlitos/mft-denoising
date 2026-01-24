@@ -6,7 +6,7 @@
     },
     "training": {
       "optimizer_type": "adam",
-      "learning_rate": null,
+      "learning_rate": 0.0015,
       "temperature": 0.0,
       "epochs": 200,
       "batch_size": 256,
@@ -20,14 +20,14 @@
     },
     "data": {
       "d": 3072,
-      "sparsity": 2,
-      "noise_variance": 0.0015,
+      "sparsity": 3,
+      "noise_variance": 0.0005,
       "n_train": 200000,
       "n_val": 5000,
       "seed": 42,
       "device": "cuda"
     },
-    "experiment_name": "abig_cuda_model_01",
+    "experiment_name": "sparsity_play",
     "output_dir": null,
     "save_model": true,
     "save_epoch_checkpoints": false,

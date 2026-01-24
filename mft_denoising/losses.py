@@ -151,6 +151,65 @@ def logistic_loss(
     return total_loss, loss_on, loss_off
 
 
+def dual_lambda_scaled_mse_loss(
+    output: torch.Tensor,  # (B, d_1 + d_2)
+    label: torch.Tensor,   # (B, d_1 + d_2)
+    lambda_1: float,
+    lambda_2: float,
+    d_1: int,
+    mask_on: Optional[torch.Tensor] = None,
+    lambda_off_1: float = 1.0,
+    lambda_off_2: float = 1.0
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Dual lambda scaled MSE loss for two input types.
+    
+    Applies lambda_1 to coordinates 0..d_1-1 (type 1) and lambda_2 to coordinates d_1..d_1+d_2-1 (type 2).
+    Also applies lambda_off_1 and lambda_off_2 to scale the off-coordinate losses for each type.
+    
+    Args:
+        output: Model predictions (B, d_1 + d_2)
+        label: Clean sparse signal (B, d_1 + d_2)
+        lambda_1: Weight for active position loss in type 1 (coordinates 0..d_1-1)
+        lambda_2: Weight for active position loss in type 2 (coordinates d_1..d_1+d_2-1)
+        d_1: Dimension of input type 1
+        mask_on: Binary mask of active positions (B, d_1 + d_2). If None, uses label as mask.
+        lambda_off_1: Weight for off-coordinate loss in type 1 (default: 1.0)
+        lambda_off_2: Weight for off-coordinate loss in type 2 (default: 1.0)
+    
+    Returns:
+        (total_loss, loss_on_1, loss_on_2, loss_off)
+        - total_loss: Combined loss
+        - loss_on_1: Loss on type 1 active coordinates
+        - loss_on_2: Loss on type 2 active coordinates
+        - loss_off: Loss on off coordinates (both types, scaled)
+    """
+    if mask_on is None:
+        mask_on = label
+    
+    # Split into type 1 and type 2
+    output_1 = output[:, :d_1]
+    output_2 = output[:, d_1:]
+    label_1 = label[:, :d_1]
+    label_2 = label[:, d_1:]
+    mask_1 = mask_on[:, :d_1]
+    mask_2 = mask_on[:, d_1:]
+    
+    # Compute losses separately for each type
+    err_on_1 = (output_1 - label_1) * mask_1
+    err_on_2 = (output_2 - label_2) * mask_2
+    err_off_1 = output_1 * (1.0 - mask_1)
+    err_off_2 = output_2 * (1.0 - mask_2)
+    
+    loss_on_1 = lambda_1 * err_on_1.pow(2).sum(dim=1).mean()
+    loss_on_2 = lambda_2 * err_on_2.pow(2).sum(dim=1).mean()
+    loss_off_1 = lambda_off_1 * err_off_1.pow(2).sum(dim=1).mean()
+    loss_off_2 = lambda_off_2 * err_off_2.pow(2).sum(dim=1).mean()
+    
+    total_loss = loss_on_1 + loss_on_2 + loss_off_1 + loss_off_2
+    return total_loss, loss_on_1, loss_on_2, loss_off_1 + loss_off_2
+
+
 def create_loss_function(cfg: LossConfig) -> Callable[[torch.Tensor, torch.Tensor, Optional[torch.Tensor]], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     """
     Factory function to create loss function based on LossConfig.
@@ -173,6 +232,21 @@ def create_loss_function(cfg: LossConfig) -> Callable[[torch.Tensor, torch.Tenso
     elif cfg.loss_type == "logistic":
         def loss_fn(output, label, mask_on=None):
             return logistic_loss(output, label, cfg.lambda_on, mask_on, cfg.logsumexp_scale, cfg.lambda_off)
+        return loss_fn
+    elif cfg.loss_type == "dual_lambda_scaled_mse":
+        if cfg.lambda_1 is None or cfg.lambda_2 is None:
+            raise ValueError("dual_lambda_scaled_mse requires both lambda_1 and lambda_2 to be set")
+        # Note: This loss function requires d_1 parameter, which should be passed separately
+        # The factory will return a function that needs d_1
+        lambda_off_1 = cfg.lambda_off_1 if cfg.lambda_off_1 is not None else 1.0
+        lambda_off_2 = cfg.lambda_off_2 if cfg.lambda_off_2 is not None else 1.0
+        def loss_fn(output, label, mask_on=None, d_1=None):
+            if d_1 is None:
+                raise ValueError("dual_lambda_scaled_mse requires d_1 parameter")
+            return dual_lambda_scaled_mse_loss(
+                output, label, cfg.lambda_1, cfg.lambda_2, d_1, mask_on,
+                lambda_off_1=lambda_off_1, lambda_off_2=lambda_off_2
+            )
         return loss_fn
     else:
         raise ValueError(f"Unknown loss type: {cfg.loss_type}")
